@@ -1,0 +1,50 @@
+[Unit]
+Description=VisualVibe Electron — AI-powered Web IDE
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/visualvibe-electron:latest
+ContainerName=visualvibe-electron
+
+# --- Network ---
+PublishPort=80:80
+
+# --- Podman-in-Podman requires privileged mode ---
+PodmanArgs=--privileged
+
+# --- Resource allocation ---
+ShmSize=2g
+
+# --- Web IDE password: set to enable password auth, leave empty for open access (perimeter security model) ---
+Environment=PASSWORD=
+
+# --- AI Agent Configuration (MANDATORY) ---
+# IMPORTANT: fill the three values below BEFORE enabling this unit — the container
+# aborts startup if any of them is empty.
+# URL of the external AI API endpoint (OpenAI-Compatible, e.g. OmniRoute)
+Environment=AI_API_URL=
+
+# API Key for the external AI endpoint
+Environment=AI_API_KEY=
+
+# Preferred language for Zoo Code (e.g. it, en, es, fr, de, etc.)
+Environment=AI_LANG=
+
+# --- Persistent volume for /home/vvelectron ---
+Volume=visualvibe-home.volume:/home/vvelectron
+
+# --- Health check ---
+HealthCmd=curl -fsSo /dev/null http://localhost/ || exit 1
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=20s
+
+[Service]
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+# ==============================================================================
+# visualvibe-home.volume — Persistent volume definition for /home/vvelectron
+#
+# Place alongside visualvibe-electron.container in:
+#   ~/.config/containers/systemd/
+# ==============================================================================
+
+[Unit]
+Description=VisualVibe Electron — Persistent Home Volume
+
+[Volume]
+# The Podman volume name matches the file name without extension (visualvibe-home)
+# Podman automatically creates this volume if it does not already exist

@@ -1,0 +1,27 @@
+# ==============================================================================
+# FileBrowser Quantum Configuration — VisualVibe Electron
+# ==============================================================================
+# Streamlined configuration for FileBrowser Quantum (gtsteffaniak/filebrowser).
+# Configured for web-native file management behind a Caddy reverse proxy.
+# Authentication (passwords, 2FA/TOTP, LDAP, OIDC) is completely disabled (noauth)
+# because access control is enforced at the perimeter (Cloudflare Access / VPN).
+#
+# database and cacheDir live under /home/vvelectron so they survive container
+# restarts via the persistent volume mount.
+# ==============================================================================
+
+server:
+  port: 8081
+  baseURL: "/filebrowser"
+  database: "/home/vvelectron/.local/share/filebrowser/filebrowser.db"
+  cacheDir: "/home/vvelectron/.cache/filebrowser"
+  sources:
+    - name: "VisualVibe Workspace"
+      path: "/home/vvelectron/VisualVibe Workdirs"
+
+frontend:
+  name: "VisualVibe FileBrowser"
+
+auth:
+  methods:
+    noauth: true

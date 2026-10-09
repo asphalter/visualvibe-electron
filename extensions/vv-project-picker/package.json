@@ -1,0 +1,55 @@
+{
+  "name": "vv-project-picker",
+  "displayName": "VisualVibe Projects",
+  "description": "Quickly switch between projects in VisualVibe Workdirs",
+  "version": "1.0.0",
+  "publisher": "visualvibe",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:visualvibe.projects"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vv-project-picker.refresh",
+        "title": "Refresh Project List",
+        "category": "VisualVibe",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "visualvibe-projects",
+          "title": "VisualVibe Projects",
+          "icon": "media/projects.svg"
+        }
+      ]
+    },
+    "views": {
+      "visualvibe-projects": [
+        {
+          "type": "webview",
+          "id": "visualvibe.projects",
+          "name": "Projects"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "vv-project-picker.refresh",
+          "when": "view == visualvibe.projects",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "categories": [
+    "Other"
+  ]
+}
