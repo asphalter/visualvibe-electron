@@ -31,21 +31,16 @@ from vv_common import HOME, zoo_lang, latest_zoo_ext_dir
 # v1 non-suffixed; v2 logging+always-overwrite; v3 removed welcome keys; v4 re-added
 # welcome keys always; v5 status file; v6 fixed anchor (was injecting into the wrong
 # function `pll` — see main() comment); v7 seeds Zoo Code settings (language from
-# AI_LANG, auto-approve everything except Question, preventFocusDisruption).
-MARKER = "/*[VisualVibe profiles seed v7]*/"
+# AI_LANG, auto-approve everything except Question, preventFocusDisruption); v8 removes file logging to /tmp;
+# v9 disables auto-approval for mode switch (alwaysAllowModeSwitch=false).
+MARKER = "/*[VisualVibe profiles seed v9]*/"
 
 # Seed snippet injected at the top of Zoo Code's activate() function. __CTX__ is
 # replaced with the activate() context parameter name found in the bundle.
-#
-# v5 writes a human-readable status file to
-#   /tmp/zoo-seed-status.txt
-# so the exact failure (env vars missing / store throwing / seed not running) is
-# visible with a single `cat`, regardless of where the extension host console goes.
 SEED = (
     MARKER
-    + 'try{const __vvk="roo_cline_config_api_config",__fs=require("fs"),'
-    + '__log=(m)=>{try{__fs.appendFileSync("/tmp/zoo-seed-status.txt",'
-    + '(new Date()).toISOString()+" "+m+"\\n")}catch(e){}console.log("[VisualVibe] "+m)};'
+    + 'try{const __vvk="roo_cline_config_api_config",'
+    + '__log=(m)=>{console.log("[VisualVibe] "+m)};'
     + '__log("seed running; AI_API_URL="+(process.env.AI_API_URL?"set":"MISSING")+", AI_API_KEY="+(process.env.AI_API_KEY?"set":"MISSING"));'
     + 'if(process.env.AI_API_URL&&process.env.AI_API_KEY){'
     + 'const __u=process.env.AI_API_URL,__k=process.env.AI_API_KEY,'
@@ -82,7 +77,7 @@ SEED = (
     + 'await __CTX__.globalState.update("deniedCommands",[]);'
     + 'await __CTX__.globalState.update("destructiveCommandGuardEnabled",false);'
     + 'await __CTX__.globalState.update("alwaysAllowMcp",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowModeSwitch",true);'
+    + 'await __CTX__.globalState.update("alwaysAllowModeSwitch",false);'
     + 'await __CTX__.globalState.update("alwaysAllowSubtasks",true);'
     + 'await __CTX__.globalState.update("alwaysAllowFollowupQuestions",false);'
     + 'await __CTX__.globalState.update("experiments",{preventFocusDisruption:true});'
@@ -107,8 +102,11 @@ def main():
         s = f.read()
 
     if MARKER in s:
-        print("[Init] Zoo Code profiles seed (v7) already applied.")
+        print(f"[Init] Zoo Code profiles seed ({MARKER}) already applied.")
         return
+
+    # Strip any older seed version so upgrades/re-runs cleanly replace the injection.
+    s = re.sub(r'/\*\[VisualVibe profiles seed [^\]]+\]\*/.*?(catch\(__e0\)\{[^}]+\})', '', s)
 
     # Activate() signature: async function NAME(CTX){oxi=CTX, ...  (CTX is stored globally as `oxi`).
     # IMPORTANT: `oxi=CTX,` must be IMMEDIATELY after the opening brace. A non-greedy

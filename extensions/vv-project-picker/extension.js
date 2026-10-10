@@ -32,8 +32,20 @@ function scanProjects(workdirsRoot) {
     }
     try {
         const entries = fs.readdirSync(workdirsRoot, { withFileTypes: true });
-        // NOTE: keep in sync with _IGNORED_DIRS in scripts/lib/vv_common.py
-        const ignored = new Set(['tmp', '.git', '.vscode', 'node_modules', '__pycache__', 'VisualVibe Workdirs']);
+        let ignoredList = ['tmp', '.git', '.vscode', 'node_modules', '__pycache__', 'VisualVibe Workdirs'];
+        const configCandidates = [
+            '/opt/visualvibe/config/ignored-dirs.json',
+            path.join(__dirname, '..', '..', 'config', 'ignored-dirs.json')
+        ];
+        for (const cfg of configCandidates) {
+            if (fs.existsSync(cfg)) {
+                try {
+                    ignoredList = JSON.parse(fs.readFileSync(cfg, 'utf8'));
+                    break;
+                } catch (e) {}
+            }
+        }
+        const ignored = new Set(ignoredList);
         const projects = [];
         for (const ent of entries) {
             if (!ent.isDirectory()) continue;
@@ -143,19 +155,18 @@ function getCss() {
             color: var(--vscode-button-secondaryForeground, #ffffff);
             opacity: 0.6; cursor: default;
         }
-        .btn-secondary {
-            background: var(--vscode-button-secondaryBackground, #3a3d41);
-            color: var(--vscode-button-secondaryForeground, #ffffff);
+        .empty-state {
+            color: var(--vscode-descriptionForeground, #888888);
+            font-size: 12px;
+            font-style: italic;
+            padding: 8px 0;
         }
-        .btn-secondary:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
-        .root-card { border-style: dashed; }
     `;
 }
 
 function buildHtml(workdirsRoot) {
     const projects = scanProjects(workdirsRoot);
     const currentPath = getCurrentFolderPath();
-    const isRootOpen = currentPath === workdirsRoot;
 
     const projectCards = projects.map(p => {
         const isCurrent = p.path === currentPath;
@@ -179,10 +190,9 @@ function buildHtml(workdirsRoot) {
         </div>`;
     }).join('\n');
 
-    const rootTargetUrl = `/?folder=${encodeURIComponent(workdirsRoot)}`;
-    const rootBtn = isRootOpen
-        ? `<button class="btn btn-current" disabled>In uso</button>`
-        : `<a class="btn btn-secondary" href="${rootTargetUrl}" target="_top">Tutti i progetti</a>`;
+    const contentHtml = projectCards.length > 0
+        ? projectCards
+        : '<div class="empty-state">Nessun progetto trovato in VisualVibe Workdirs. Crea una cartella per iniziare.</div>';
 
     return `<!DOCTYPE html>
 <html lang="it">
@@ -205,16 +215,7 @@ function buildHtml(workdirsRoot) {
         Aprire un singolo progetto isola la <strong>task history di Zoo Code</strong> e applica le sue regole e la <code>memory-bank/</code>.
     </div>
     <div class="project-list">
-        ${projectCards}
-    </div>
-    <div class="project-card root-card ${isRootOpen ? 'is-current' : ''}">
-        <div class="project-header">
-            <span class="project-name">VisualVibe Workdirs (tutti)</span>
-            ${isRootOpen ? '<span class="badge active">Attivo</span>' : ''}
-        </div>
-        <div class="project-actions">
-            ${rootBtn}
-        </div>
+        ${contentHtml}
     </div>
     <script>
         const vscode = acquireVsCodeApi();

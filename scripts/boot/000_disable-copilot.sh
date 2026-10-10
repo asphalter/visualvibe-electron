@@ -1,13 +1,23 @@
 #!/bin/bash
-# 000_disable-copilot.sh — boot — remove the bundled GitHub Copilot Chat built-in
-# extension so its "Chat" view does not appear in the Secondary Side Bar alongside
-# Zoo Code (idempotent; also guards against the extension reappearing).
+# 000_disable-copilot.sh — boot — remove any bundled GitHub Copilot / Copilot Chat
+# extensions across system and user extension paths (idempotent).
+# Note: In VS Code 1.140+, the core "Chat" view container (workbench.panel.chat) is built
+# into the workbench rather than an extension, and is hidden by 004_patch-workbench-activitybar.py.
 set -e
 
-CODIR="/usr/lib/code-server/lib/vscode/extensions/copilot"
-if [ -d "$CODIR" ]; then
-    rm -rf "$CODIR"
-    echo "[Copilot] Removed bundled GitHub Copilot Chat extension."
-else
-    echo "[Copilot] Copilot extension already absent."
+removed=0
+for pattern in "*copilot*" "*copilot-chat*" "github.copilot*"; do
+    for base in "/usr/lib/code-server/lib/vscode/extensions" "/home/vvelectron/.local/share/code-server/extensions"; do
+        for dir in "$base"/$pattern; do
+            if [ -d "$dir" ]; then
+                rm -rf "$dir"
+                echo "[Copilot] Removed extension directory: $dir"
+                removed=$((removed + 1))
+            fi
+        done
+    done
+done
+
+if [ "$removed" -eq 0 ]; then
+    echo "[Copilot] No Copilot extension directories present (workbench.panel.chat hidden via workbench patch)."
 fi

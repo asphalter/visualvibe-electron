@@ -146,6 +146,14 @@ The `AI_LANG` environment variable configures Zoo Code's **language** setting.
 > *Legacy aliases `pt` and `zh` are accepted and mapped to `pt-BR` / `zh-CN`.*
 > *Any unsupported value (e.g. `ar`, which Zoo Code does not provide) falls back to `en` (English).*
 
+### 🔒 Secure Upstream Forwarding & Reverse Proxy Integration
+
+The container exposes strictly unencrypted HTTP on port `80`. Internally, Caddy proxies all requests to code-server (`127.0.0.1:8080`) while communicating that the upstream connection is secure by injecting:
+- `X-Forwarded-Proto: https`
+- `X-Forwarded-Port: 443`
+
+This informs code-server's runtime and webview generators that the environment is secure, without incurring container-internal encryption or certificate management overhead.
+
 
 ### Zoo Code AI Model Routing
 

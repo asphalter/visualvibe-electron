@@ -13,28 +13,41 @@ import sqlite3
 import hashlib
 
 
-def _vscode_folder_hash(fs_path):
-    """Compute the code-server workspaceStorage folder hash for a local folder."""
+def _vscode_folder_hashes(fs_path):
+    """Compute possible code-server workspaceStorage folder hashes.
+
+    Includes primary path+inode hash and resilient path-only fallback to survive
+    volume moves, inode reallocations, or different code-server internal hashing variants.
+    """
+    hashes = []
     try:
         ino = str(os.stat(fs_path).st_ino)
     except OSError:
         ino = ""
-    h = hashlib.md5()
-    h.update(fs_path.encode("utf-8"))
     if ino:
-        h.update(ino.encode("utf-8"))
-    return h.hexdigest()
+        h_ino = hashlib.md5()
+        h_ino.update(fs_path.encode("utf-8"))
+        h_ino.update(ino.encode("utf-8"))
+        hashes.append(h_ino.hexdigest())
+
+    h_path = hashlib.md5()
+    h_path.update(fs_path.encode("utf-8"))
+    digest = h_path.hexdigest()
+    if digest not in hashes:
+        hashes.append(digest)
+    return hashes
 
 
 _workdirs_path = os.path.join(HOME, "VisualVibe Workdirs")
 _home_path = HOME
 
-ws_configs = [
-    (_vscode_folder_hash(_home_path), f"file://{_home_path}"),
-]
+ws_configs = []
+for h in _vscode_folder_hashes(_home_path):
+    ws_configs.append((h, f"file://{_home_path}"))
 
 for _name, _full in discover_projects(_workdirs_path):
-    ws_configs.append((_vscode_folder_hash(_full), f"file://{_full.replace(' ', '%20')}"))
+    for h in _vscode_folder_hashes(_full):
+        ws_configs.append((h, f"file://{_full.replace(' ', '%20')}"))
 
 for ws_hash, folder_uri in ws_configs:
     ws_dir = os.path.join(HOME, f".local/share/code-server/User/workspaceStorage/{ws_hash}")

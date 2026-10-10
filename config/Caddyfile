@@ -1,71 +1,69 @@
 # ==============================================================================
 # Caddyfile — VisualVibe Electron reverse proxy
 # ==============================================================================
-# Listens on :80 and routes:
+# Listens strictly on plain HTTP (:80) and routes:
 #   /filebrowser/* → FileBrowser Quantum on 127.0.0.1:8081 (prefix preserved)
 #   /*             → code-server on 127.0.0.1:8080
 #
-# Both services bind only to loopback — all external traffic goes through here.
-# Caddy handles WebSocket upgrades automatically (no explicit config needed).
-#
-# NOTE: handle (not handle_path) is used for /filebrowser/* so the full path
-# including the /filebrowser prefix is forwarded to FileBrowser.  FileBrowser
-# knows its own baseURL ("/filebrowser") and handles the prefix itself.
-# Using handle_path would strip the prefix, causing a redirect loop because
-# FileBrowser would then redirect back to /filebrowser/ → infinite loop.
+# Communicates to the backends that the upstream connection is secure
+# (X-Forwarded-Proto: https) so code-server treats requests and webviews
+# as secure without requiring encryption/TLS inside the container.
 # ==============================================================================
 
 :80 {
-    # Compression for the workbench static assets.
-    encode zstd gzip
+	# Compression for the workbench static assets.
+	encode zstd gzip
 
-    # Baseline security headers (perimeter security model: auth is enforced upstream).
-    header {
-        X-Content-Type-Options nosniff
-        Referrer-Policy strict-origin-when-cross-origin
-    }
+	# Baseline security headers (perimeter security model: auth is enforced upstream).
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
 
-    # Redirect bare /filebrowser → /filebrowser/ (Caddy-side convenience redirect)
-    redir /filebrowser /filebrowser/ permanent
+	# Redirect bare /filebrowser → /filebrowser/ (Caddy-side convenience redirect)
+	redir /filebrowser /filebrowser/ permanent
 
-    # FileBrowser Quantum ships its favicon.svg and site.webmanifest compiled
-    # into the binary and provides no branding config, so we serve VisualVibe
-    # replacements for those two assets before proxying the rest to FileBrowser.
-    handle /filebrowser/public/static/favicon.svg {
-        rewrite * /favicon.svg
-        root * /opt/visualvibe/media
-        file_server
-    }
+	# FileBrowser Quantum custom branding
+	handle /filebrowser/public/static/favicon.svg {
+		rewrite * /favicon.svg
+		root * /opt/visualvibe/media
+		file_server
+	}
 
-    handle /filebrowser/public/static/site.webmanifest {
-        header Content-Type application/manifest+json
-        rewrite * /filebrowser.webmanifest
-        root * /opt/visualvibe/config
-        file_server
-    }
+	handle /filebrowser/public/static/site.webmanifest {
+		header Content-Type application/manifest+json
+		rewrite * /filebrowser.webmanifest
+		root * /opt/visualvibe/config
+		file_server
+	}
 
-    # FileBrowser Quantum: forward full path to backend
-    handle /filebrowser/* {
-        reverse_proxy 127.0.0.1:8081
-    }
+	# FileBrowser Quantum: forward full path to backend
+	handle /filebrowser/* {
+		reverse_proxy 127.0.0.1:8081 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-Proto https
+		}
+	}
 
-    # code-server: workbench.js is patched by entrypoint.sh at startup, but its URL is
-    # prefixed with a build hash that only changes when the code-server VERSION changes —
-    # NOT when the file is patched. code-server serves it with `Cache-Control: public,
-    # max-age=31536000` (1 year), so a browser/CDN would keep serving a stale, unpatched
-    # workbench.js for up to a year after a rebuild (root cause of "Projects appears last"
-    # in Chromium/Edge/Opera after the Activity Bar patches were added).
-    #
-    # Override that one file's cache policy to force revalidation on every load, so the
-    # freshly-patched workbench.js is always what actually runs in the browser.
-    handle /stable-*/static/out/vs/code/browser/workbench/workbench.js {
-        reverse_proxy 127.0.0.1:8080 {
-            header_down Cache-Control "no-cache"
-        }
-    }
+	# code-server: workbench.js force revalidation + secure upstream headers
+	handle /stable-*/static/out/vs/code/browser/workbench/workbench.js {
+		reverse_proxy 127.0.0.1:8080 {
+			header_down Cache-Control "no-cache"
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Port 443
+		}
+	}
 
-    # code-server Web IDE: catch-all (must be last)
-    handle {
-        reverse_proxy 127.0.0.1:8080
-    }
+	# code-server Web IDE: catch-all
+	handle {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Port 443
+		}
+	}
 }

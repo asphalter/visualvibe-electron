@@ -1,0 +1,52 @@
+# ==============================================================================
+# docker-compose.yml — VisualVibe Electron (Docker environment)
+# ==============================================================================
+# Aligned with the Podman Quadlet configuration (quadlet/visualvibe-electron.container):
+#   - Privileged mode (required for nested Podman-in-Podman runtime)
+#   - 2GB /dev/shm (Chromium headless)
+#   - Persistent named volume mounted at /home/vvelectron
+#   - Mandatory AI_* environment variables (container aborts on startup if empty)
+#   - Healthcheck testing both code-server root and FileBrowser via Caddy
+#
+# Usage:
+#   docker compose up -d --build
+# ==============================================================================
+
+services:
+  visualvibe-github:
+    build:
+      context: https://github.com/asphalter/visualvibe-electron.git#main
+      dockerfile: Containerfile
+
+    image: visualvibe-electron:github
+    container_name: visualvibe-github
+    restart: unless-stopped
+
+    ports:
+      - "8182:80"
+
+    privileged: true
+    shm_size: "2gb"
+
+    environment:
+      TZ: Europe/Rome
+      # --- AI Agent Configuration (MANDATORY) ---
+      # The container strictly validates these three variables on startup and will abort if empty.
+      AI_API_URL: "http://127.0.0.1:20128/v1"
+      AI_API_KEY: "sk-placeholder-ffffff-ffffff"
+      AI_LANG: "it"
+      # --- Web IDE password: set to enable password auth, leave empty for open access ---
+      PASSWORD: ""
+
+    volumes:
+      - visualvibe_github_data:/home/vvelectron
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSo /dev/null http://localhost/ && curl -fsSo /dev/null http://localhost/filebrowser/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  visualvibe_github_data:

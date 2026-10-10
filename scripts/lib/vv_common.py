@@ -57,8 +57,25 @@ def zoo_lang(code=None):
 
 
 # ── Project discovery under the workspace root ──────────────────────────────
-# NOTE: keep in sync with the `ignored` set in extensions/vv-project-picker/extension.js
-_IGNORED_DIRS = {"tmp", ".git", ".vscode", "node_modules", "__pycache__", "VisualVibe Workdirs"}
+import json
+
+
+def _load_ignored_dirs():
+    candidates = [
+        "/opt/visualvibe/config/ignored-dirs.json",
+        os.path.join(os.path.dirname(__file__), "..", "..", "config", "ignored-dirs.json"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return set(json.load(f))
+            except Exception:
+                pass
+    return {"tmp", ".git", ".vscode", "node_modules", "__pycache__", "VisualVibe Workdirs"}
+
+
+_IGNORED_DIRS = _load_ignored_dirs()
 
 
 def discover_projects(workdirs_path):

@@ -31,15 +31,20 @@ for wb_path in glob.glob("/usr/lib/code-server/lib/vscode/out/vs/code/browser/wo
             wb_content = f.read()
         wb_modified = False
 
-        # 1. Force shouldBeHidden() to never hide visualvibe-projects so position 0 is preserved.
+        # 1. Force shouldBeHidden() to never hide visualvibe-projects and ALWAYS hide workbench.panel.chat (Copilot).
         old_hidden = 'shouldBeHidden(e,t){let i=Oe(e)?this.getViewContainer(e):e,n=Oe(e)?e:e.id;'
-        new_hidden = 'shouldBeHidden(e,t){let i=Oe(e)?this.getViewContainer(e):e,n=Oe(e)?e:e.id;if(n==="workbench.view.extension.visualvibe-projects")return!1;'
-        if old_hidden in wb_content:
-            wb_content = wb_content.replace(old_hidden, new_hidden, 1)
+        prev_hidden = 'shouldBeHidden(e,t){let i=Oe(e)?this.getViewContainer(e):e,n=Oe(e)?e:e.id;if(n==="workbench.view.extension.visualvibe-projects")return!1;'
+        target_hidden = 'shouldBeHidden(e,t){let i=Oe(e)?this.getViewContainer(e):e,n=Oe(e)?e:e.id;if(n==="workbench.view.extension.visualvibe-projects")return!1;if(n==="workbench.panel.chat")return!0;'
+        if target_hidden in wb_content:
+            print("[Init] code-server workbench already patched (projects visible, chat hidden).")
+        elif prev_hidden in wb_content:
+            wb_content = wb_content.replace(prev_hidden, target_hidden, 1)
             wb_modified = True
-            print("[Init] Patched code-server workbench: visualvibe-projects will never be hidden.")
-        elif new_hidden in wb_content:
-            print("[Init] code-server workbench already patched (visualvibe-projects visibility).")
+            print("[Init] Patched code-server workbench: workbench.panel.chat will always be hidden.")
+        elif old_hidden in wb_content:
+            wb_content = wb_content.replace(old_hidden, target_hidden, 1)
+            wb_modified = True
+            print("[Init] Patched code-server workbench: visualvibe-projects visible, workbench.panel.chat hidden.")
         else:
             print("[Init] Warning: code-server workbench shouldBeHidden anchor not found.")
 
@@ -84,18 +89,52 @@ for wb_path in glob.glob("/usr/lib/code-server/lib/vscode/out/vs/code/browser/wo
         else:
             print("[Init] Warning: code-server workbench CompositeBarModel add anchor not found.")
 
-        # 5. Force visualvibe-projects to the front of getPinnedViewContainers() so a persisted
-        #    client-side order (IndexedDB) can never demote it below the other viewlets.
+        # 5. Force visualvibe-projects to the front of getPinnedViewContainers() and filter out workbench.panel.chat
         old_getpinned = 'getPinnedViewContainers(){return JSON.parse(this.pinnedViewContainersValue)}'
-        new_getpinned = 'getPinnedViewContainers(){let v=JSON.parse(this.pinnedViewContainersValue),i=v.findIndex(x=>x.id==="workbench.view.extension.visualvibe-projects");if(i>0){let p=v.splice(i,1)[0];v.unshift(p)}return v}'
-        if old_getpinned in wb_content:
-            wb_content = wb_content.replace(old_getpinned, new_getpinned, 1)
+        prev_getpinned = 'getPinnedViewContainers(){let v=JSON.parse(this.pinnedViewContainersValue),i=v.findIndex(x=>x.id==="workbench.view.extension.visualvibe-projects");if(i>0){let p=v.splice(i,1)[0];v.unshift(p)}return v}'
+        target_getpinned = 'getPinnedViewContainers(){let v=JSON.parse(this.pinnedViewContainersValue).filter(x=>x.id!=="workbench.panel.chat"),i=v.findIndex(x=>x.id==="workbench.view.extension.visualvibe-projects");if(i>0){let p=v.splice(i,1)[0];v.unshift(p)}return v}'
+        if target_getpinned in wb_content:
+            print("[Init] code-server workbench already patched (getPinnedViewContainers projects position and chat filtered).")
+        elif prev_getpinned in wb_content:
+            wb_content = wb_content.replace(prev_getpinned, target_getpinned, 1)
             wb_modified = True
-            print("[Init] Patched code-server workbench: getPinnedViewContainers forces visualvibe-projects to index 0.")
-        elif new_getpinned in wb_content:
-            print("[Init] code-server workbench already patched (getPinnedViewContainers projects position).")
+            print("[Init] Patched code-server workbench: getPinnedViewContainers filters out workbench.panel.chat.")
+        elif old_getpinned in wb_content:
+            wb_content = wb_content.replace(old_getpinned, target_getpinned, 1)
+            wb_modified = True
+            print("[Init] Patched code-server workbench: getPinnedViewContainers forces projects to index 0 and filters out chat.")
         else:
             print("[Init] Warning: code-server workbench getPinnedViewContainers anchor not found.")
+
+        # 6. Unset isDefault on core Chat container registration so AuxiliaryBar does not pick it
+        old_chat_reg = 'registerViewContainer({id:VY,title:F(9805,"Chat"),icon:zIn,ctorDescriptor:new li(wd,[VY,{mergeViewWithContainerWhenSingleView:!0}]),storageId:VY,hideIfEmpty:!0,order:1},2,{isDefault:!0,'
+        new_chat_reg = 'registerViewContainer({id:VY,title:F(9805,"Chat"),icon:zIn,ctorDescriptor:new li(wd,[VY,{mergeViewWithContainerWhenSingleView:!0}]),storageId:VY,hideIfEmpty:!0,order:1},2,{isDefault:!1,'
+        if old_chat_reg in wb_content:
+            wb_content = wb_content.replace(old_chat_reg, new_chat_reg, 1)
+            wb_modified = True
+            print("[Init] Patched code-server workbench: Chat view container isDefault set to false.")
+        elif new_chat_reg in wb_content:
+            print("[Init] code-server workbench already patched (Chat isDefault false).")
+
+        # 7. Do not register views under Chat container (with hideIfEmpty:true, container stays hidden)
+        old_chat_views = 'me.as(dr.ViewsRegistry).registerViews([KIn],ZTe)'
+        new_chat_views = 'me.as(dr.ViewsRegistry).registerViews([],ZTe)'
+        if old_chat_views in wb_content:
+            wb_content = wb_content.replace(old_chat_views, new_chat_views, 1)
+            wb_modified = True
+            print("[Init] Patched code-server workbench: Chat views registration neutralized.")
+        elif new_chat_views in wb_content:
+            print("[Init] code-server workbench already patched (Chat views neutralized).")
+
+        # 8. Disable Copilot status bar entry
+        old_status_entry = 'this.entry=this.statusbarService.addEntry(t,"chat.statusBarEntry"'
+        new_status_entry = 'this.entry=null;if(false)this.entry=this.statusbarService.addEntry(t,"chat.statusBarEntry"'
+        if old_status_entry in wb_content:
+            wb_content = wb_content.replace(old_status_entry, new_status_entry, 1)
+            wb_modified = True
+            print("[Init] Patched code-server workbench: Chat/Copilot status bar entry disabled.")
+        elif new_status_entry in wb_content:
+            print("[Init] code-server workbench already patched (Chat status bar disabled).")
 
         if wb_modified:
             with open(wb_path, "w", encoding="utf-8") as f:
@@ -103,13 +142,16 @@ for wb_path in glob.glob("/usr/lib/code-server/lib/vscode/out/vs/code/browser/wo
     except Exception as e:
         print(f"[Init] Warning: Could not patch code-server workbench.js: {e}")
 
-# ── Verify all 5 anchors actually landed (fail-loud on version mismatch) ─────
+# ── Verify all anchors actually landed (fail-loud on version mismatch) ─────
 _expected_patches = [
-    ("shouldBeHidden",             'if(n==="workbench.view.extension.visualvibe-projects")return!1'),
+    ("shouldBeHidden",             'if(n==="workbench.view.extension.visualvibe-projects")return!1;if(n==="workbench.panel.chat")return!0;'),
     ("addComposite",               'requestedIndex:e.id==="workbench.view.extension.visualvibe-projects"?0:e.requestedIndex'),
     ("registerCustomViewContainer", 'r.id==="visualvibe-projects"?-1:t++'),
     ("CompositeBarModel.add",      'if(o==="workbench.view.extension.visualvibe-projects"){let x=this.items.indexOf(n)'),
-    ("getPinnedViewContainers",    'x.id==="workbench.view.extension.visualvibe-projects"'),
+    ("getPinnedViewContainers",    'x.id!=="workbench.panel.chat"'),
+    ("chatIsDefaultFalse",         '{isDefault:!1,'),
+    ("chatViewsNeutralized",       '.registerViews([],ZTe)'),
+    ("chatStatusBarDisabled",      'this.entry=null;if(false)this.entry='),
 ]
 for _wbv in glob.glob("/usr/lib/code-server/lib/vscode/out/vs/code/browser/workbench/workbench.js"):
     try:

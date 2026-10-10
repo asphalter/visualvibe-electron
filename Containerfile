@@ -85,9 +85,8 @@ RUN dnf copr enable -y "${CADDY_COPR}" "${CADDY_COPR_CHROOT}" \
 # 4. Install code-server (VS Code in the browser via official install script, pinned version)
 RUN curl -fsSL https://code-server.dev/install.sh | sh -s -- --version "${CODE_SERVER_VERSION}"
 
-# Remove the bundled GitHub Copilot Chat extension so its "Chat" view does not
-# appear in the Secondary Side Bar (VisualVibe uses Zoo Code, not Copilot).
-RUN rm -rf /usr/lib/code-server/lib/vscode/extensions/copilot
+# Remove any bundled Copilot extensions (core workbench.panel.chat is hidden via patch)
+RUN rm -rf /usr/lib/code-server/lib/vscode/extensions/*copilot*
 
 # 5. Install FileBrowser Quantum for Web-Native File Transfer (Upload/Download)
 RUN curl -fsSL -o /usr/local/bin/filebrowser \
@@ -146,5 +145,5 @@ WORKDIR /home/vvelectron
 ARG BANNER_CACHEBUST=""
 RUN bash /opt/visualvibe/scripts/print_banner.sh
 
-# Entrypoint
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# Entrypoint (catatonit as PID 1 init for signal forwarding and zombie reaping)
+ENTRYPOINT ["/usr/libexec/catatonit/catatonit", "--", "/usr/local/bin/entrypoint.sh"]

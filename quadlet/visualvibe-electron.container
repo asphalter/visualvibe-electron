@@ -34,8 +34,8 @@ Environment=AI_LANG=
 # --- Persistent volume for /home/vvelectron ---
 Volume=visualvibe-home.volume:/home/vvelectron
 
-# --- Health check ---
-HealthCmd=curl -fsSo /dev/null http://localhost/ || exit 1
+# --- Health check (verifies both code-server root and FileBrowser via Caddy) ---
+HealthCmd=curl -fsSo /dev/null http://localhost/ && curl -fsSo /dev/null http://localhost/filebrowser/ || exit 1
 HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=20s

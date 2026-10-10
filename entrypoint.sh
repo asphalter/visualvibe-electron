@@ -48,6 +48,8 @@ mkdir -p /home/vvelectron
 # Only fix ownership on the home dir itself — NOT recursively.
 # Recursive chown would walk the entire persistent volume on every boot.
 chown vvelectron:vvelectron /home/vvelectron
+mkdir -p /home/vvelectron/.local/share
+chown -R vvelectron:vvelectron /home/vvelectron/.local 2>/dev/null || true
 
 # Ensure the cache dir is owned by vvelectron (avoid EACCES on .cache/Microsoft etc.)
 if [ -e /home/vvelectron/.cache ]; then
@@ -93,19 +95,24 @@ chown -R vvelectron:vvelectron \
     /home/vvelectron/.local/share/filebrowser \
     /home/vvelectron/.cache/filebrowser
 
-# Helper: active HTTP polling with fail-fast timeout
+# Helper: active HTTP polling with fail-fast timeout and process liveliness check
 wait_for_http() {
     local url="$1"
     local label="$2"
     local timeout="${3:-30}"
     local logfile="$4"
+    local pid="${5:-}"
     local elapsed=0
 
     echo "[$label] Waiting for service readiness at $url (timeout: ${timeout}s)..."
     while [ "$elapsed" -lt "$timeout" ]; do
-        if curl -fsSo /dev/null "$url" 2>/dev/null; then
+        if curl -k -fsSo /dev/null "$url" 2>/dev/null; then
             echo "[$label] Service is ready and responding."
             return 0
+        fi
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            echo "[$label] FATAL: Process (PID $pid) died unexpectedly during startup!" >&2
+            break
         fi
         sleep 1
         elapsed=$((elapsed + 1))
@@ -124,15 +131,8 @@ wait_for_http() {
 # 8. Start FileBrowser Quantum (127.0.0.1:8081, served via Caddy at /filebrowser/)
 echo "[FileBrowser] Starting FileBrowser Quantum on 127.0.0.1:8081..."
 runuser -u vvelectron -- filebrowser -c /opt/visualvibe/config/filebrowser.yaml > /tmp/filebrowser.log 2>&1 &
-sleep 1
-if ! pgrep -u vvelectron -x filebrowser > /dev/null 2>&1; then
-    echo "[FileBrowser] FATAL: FileBrowser process did not stay running! Log output:" >&2
-    cat /tmp/filebrowser.log 2>/dev/null >&2 || true
-    exit 1
-else
-    echo "[FileBrowser] FileBrowser Quantum is running (PID $(pgrep -u vvelectron -x filebrowser | head -1))."
-fi
-wait_for_http "http://127.0.0.1:8081/filebrowser/" "FileBrowser" 30 "/tmp/filebrowser.log"
+FB_PID=$!
+wait_for_http "http://127.0.0.1:8081/filebrowser/" "FileBrowser" 30 "/tmp/filebrowser.log" "$FB_PID"
 
 # 8b. Apply VisualVibe branding to FileBrowser (post-start: it regenerates its icons)
 bash "$BOOT_DIR/010_filebrowser-branding.sh" || echo "[boot] WARN: 010_filebrowser-branding.sh failed (continuing)"
@@ -159,28 +159,14 @@ runuser -u vvelectron -- \
         --disable-telemetry \
         --app-name "VisualVibe Electron" \
     > /tmp/code-server.log 2>&1 &
-sleep 2
-if ! pgrep -u vvelectron -f "code-server" > /dev/null 2>&1; then
-    echo "[code-server] FATAL: code-server process did not stay running! Log output:" >&2
-    cat /tmp/code-server.log >&2 || true
-    exit 1
-else
-    echo "[code-server] code-server is running (PID $(pgrep -u vvelectron -f 'node.*code-server' | head -1))."
-fi
-wait_for_http "http://127.0.0.1:8080/healthz" "code-server" 30 "/tmp/code-server.log"
+CS_PID=$!
+wait_for_http "http://127.0.0.1:8080/healthz" "code-server" 30 "/tmp/code-server.log" "$CS_PID"
 
-# 10. Start Caddy reverse proxy (:80 → code-server :8080 + FileBrowser :8081)
+# 10. Start Caddy reverse proxy on plain HTTP (:80) with secure upstream forwarding
 echo "[Caddy] Starting Caddy reverse proxy on :80..."
-caddy start --config /opt/visualvibe/config/Caddyfile --adapter caddyfile > /tmp/caddy.log 2>&1
-sleep 1
-if ! pgrep -x caddy > /dev/null 2>&1; then
-    echo "[Caddy] FATAL: Caddy failed to start! Log output:" >&2
-    cat /tmp/caddy.log >&2 || true
-    exit 1
-else
-    echo "[Caddy] Caddy is running (PID $(pgrep -x caddy | head -1))."
-fi
-wait_for_http "http://127.0.0.1:80/" "Caddy" 15 "/tmp/caddy.log"
+caddy run --config /opt/visualvibe/config/Caddyfile --adapter caddyfile > /tmp/caddy.log 2>&1 &
+CADDY_PID=$!
+wait_for_http "http://127.0.0.1:80/" "Caddy" 15 "/tmp/caddy.log" "$CADDY_PID"
 
 echo "=========================================================="
 echo " VisualVibe Electron is ACTIVE and ready!"
@@ -192,7 +178,9 @@ echo "=========================================================="
 # Graceful shutdown cleanup trap
 cleanup() {
     echo "[Shutdown] Terminating services..."
-    caddy stop 2>/dev/null || pkill -x caddy 2>/dev/null || true
+    if [ -n "${CADDY_PID:-}" ]; then
+        kill -TERM "$CADDY_PID" 2>/dev/null || true
+    fi
     pkill -u vvelectron filebrowser 2>/dev/null || true
     # Gracefully stop code-server and WAIT for it to exit, so VS Code flushes
     # state.vscdb (globalState) and the extension host (Zoo Code task history)
@@ -209,12 +197,12 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT SIGQUIT
 
-# Keep container running while code-server is active.
+# Keep container running while code-server and Caddy are active.
 # Use 'sleep N & wait $!' so SIGTERM is delivered immediately to Bash.
-while pgrep -u vvelectron -f "code-server" > /dev/null 2>&1; do
+while kill -0 "$CADDY_PID" 2>/dev/null && pgrep -u vvelectron -f "code-server" > /dev/null 2>&1; do
     sleep 2 &
     wait $!
 done
 
-echo "[Error] code-server terminated unexpectedly."
-exit 1
+echo "[Shutdown] Primary service exited, running cleanup..."
+cleanup
