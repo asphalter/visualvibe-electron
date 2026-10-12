@@ -25,6 +25,18 @@ if os.path.exists(settings_path):
     except Exception:
         current = {}
 
+# Determine VisualVibe version from VERSION file
+vv_ver = ""
+for vpath in ("/opt/visualvibe/VERSION", "/home/vvelectron/VisualVibe Workdirs/VisualVibe Electron/VERSION"):
+    if os.path.exists(vpath):
+        try:
+            with open(vpath, "r", encoding="utf-8") as vf:
+                vv_ver = vf.read().strip()
+            if vv_ver:
+                break
+        except Exception:
+            pass
+
 current.update({
     "window.title": "VisualVibe Electron",
     "editor.formatOnSave": False,
@@ -39,6 +51,9 @@ current.update({
     "workbench.sideBar.location": "left",
     "workbench.colorTheme": "Default Dark Modern"
 })
+
+if vv_ver:
+    current["visualvibe.version"] = vv_ver
 
 # Remove stale Copilot chat settings left over from older images (the bundled
 # GitHub Copilot Chat extension is now removed at build/boot time).

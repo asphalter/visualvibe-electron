@@ -1,35 +1,89 @@
 #!/usr/bin/env python3
 """
-007_preseed-rules.py — boot — pre-seed Zoo Code project rules (.roo/rules/) and a
-memory-bank/ folder (projectbrief, activeContext, progress, systemPatterns, techContext)
+007_preseed-rules.py — boot — pre-seed Zoo Code Global Rules (~/.roo/rules/visualvibe.md)
+and workspace memory-bank/ folders (projectbrief, activeContext, progress, systemPatterns, techContext)
 into every discovered project that does not already have them (idempotent).
 """
 import sys, os
 sys.path.insert(0, "/opt/visualvibe/scripts/lib")
 from vv_common import HOME, discover_projects
 
+# ── 1. Global Zoo Code Rules (~/.roo/rules/visualvibe.md) ────────────────────
+# Zoo Code loads global rules from ~/.roo/rules/*.md across all workspaces.
+# Keeping VisualVibe directives here ensures they appear in the UI under "Global Rules"
+# and prevents duplication across individual projects.
+try:
+    global_rules_dir = os.path.join(HOME, ".roo", "rules")
+    os.makedirs(global_rules_dir, exist_ok=True)
+    global_rules_file = os.path.join(global_rules_dir, "visualvibe.md")
+
+    global_rules_content = """# VisualVibe Rules — Global Directives
+
+## 1. Memory Bank
+At the start of every task or conversation in a project:
+1. Read all files in the workspace's `memory-bank/` directory to gather the current context.
+2. Pay close attention to `memory-bank/activeContext.md` and `memory-bank/progress.md`.
+3. When completing architectural changes, milestones, or new features, update the corresponding `memory-bank/` files.
+
+## 2. Project Directives
+- Maintain existing folder structures and established coding patterns.
+- Before implementing complex changes, present a clear plan and await user alignment when in plan mode.
+
+## 3. Safe Execution — Ephemeral Podman Containers
+
+Any operation requiring dependency installation, code compilation, test suite execution,
+proof-of-concept trials, temporary development servers, or bulk downloads MUST be executed
+inside ephemeral Podman containers, taking full advantage of the nested Podman-in-Podman runtime.
+
+Never install packages or global dependencies directly into the main container's filesystem
+to prevent polluting the persistent host environment.
+
+### Standard Patterns
+
+```bash
+# Execute and automatically remove container (--rm) mounting workspace
+podman run --rm -v "$(pwd):/workspace:z" -w /workspace <image> <command>
+
+# Execute with temporary port exposure
+podman run --rm -v "$(pwd):/workspace:z" -w /workspace -p <port>:<port> <image> <command>
+```
+
+### Recommended Images
+
+- **Python**: `python:3.12-slim`
+- **Node.js**: `node:22-slim`
+- **Rust**: `rust:slim`
+- **Go**: `golang:alpine`
+- **C/C++**: `gcc:latest` or `alpine:latest`
+- **Shell / Utilities**: `alpine:latest`
+
+### Operating Rules
+
+1. Always use `--rm` to automatically clean up the container upon completion.
+2. Always mount current working directory with `-v "$(pwd):/workspace:z"` (`:z` is required for SELinux/Podman compatibility).
+3. Never use `--privileged` flag inside ephemeral containers unless strictly and demonstrably required.
+4. All generated files and persistent build artifacts must reside within the mounted `/workspace` directory.
+"""
+    # Write or update global rules
+    with open(global_rules_file, "w", encoding="utf-8") as f:
+        f.write(global_rules_content)
+    print("[Init] Seeded global Zoo Code rules at ~/.roo/rules/visualvibe.md")
+except Exception as e:
+    print(f"[Init] Warning: Could not seed global Zoo Code rules: {e}")
+
+# ── 2. Workspace Pre-seeding (memory-bank/ per project) ───────────────────────
 _workdirs_path = os.path.join(HOME, "VisualVibe Workdirs")
 
 for prj_name, prj_dir in discover_projects(_workdirs_path):
     try:
-        rules_dir = os.path.join(prj_dir, ".roo", "rules")
-        os.makedirs(rules_dir, exist_ok=True)
-        rules_file = os.path.join(rules_dir, "visualvibe.md")
-        if not os.path.exists(rules_file):
-            with open(rules_file, "w", encoding="utf-8") as f:
-                f.write(f"""# VisualVibe Rules — {prj_name}
-
-## 1. Memory Bank
-All'inizio di ogni task o conversazione su questo progetto:
-1. Leggi tutti i file presenti nella cartella `memory-bank/` per acquisire il contesto corrente.
-2. In particolare consulta `memory-bank/activeContext.md` e `memory-bank/progress.md`.
-3. Quando completi modifiche architetturali, milestone o nuove funzionalita', aggiorna i file della `memory-bank/` corrispondenti.
-
-## 2. Direttive di progetto
-- Lingua preferita: Italiano.
-- Mantieni la struttura delle cartelle e i pattern di codice esistenti.
-- Prima di implementare modifiche complesse, descrivi il piano e attendi allineamento se in plan mode.
-""")
+        # Clean up legacy redundant workspace rule if it was previously injected
+        legacy_prj_rule = os.path.join(prj_dir, ".roo", "rules", "visualvibe.md")
+        if os.path.exists(legacy_prj_rule):
+            try:
+                os.remove(legacy_prj_rule)
+                print(f"[Init] Cleaned up redundant workspace rule {legacy_prj_rule} in favor of global rules.")
+            except Exception:
+                pass
 
         mb_dir = os.path.join(prj_dir, "memory-bank")
         os.makedirs(mb_dir, exist_ok=True)
@@ -37,58 +91,58 @@ All'inizio di ogni task o conversazione su questo progetto:
         mb_files = {
             "projectbrief.md": f"""# Project Brief — {prj_name}
 
-## Obiettivo
-Breve descrizione dell'obiettivo principale del progetto {prj_name}.
+## Goal
+Brief description of the primary objective for project {prj_name}.
 
-## Requisiti chiave
-- Requisito 1
-- Requisito 2
+## Key Requirements
+- Requirement 1
+- Requirement 2
 
-## Note
-Informazioni generali o vincoli architetturali.
+## Notes
+General context, architectural constraints, and considerations.
 """,
             "activeContext.md": f"""# Active Context — {prj_name}
 
-## Focus corrente
-Descrivere qui l'attivita' in corso o l'ultimo obiettivo su cui si e' lavorato.
+## Current Focus
+Describe the ongoing task or latest objective being worked on.
 
-## Prossimi passi
+## Next Steps
 - [ ] Task 1
 - [ ] Task 2
 
-## Decisioni recenti
-- Registrare qui le decisioni tecniche prese nelle ultime sessioni.
+## Recent Decisions
+- Record technical and architectural decisions made in recent sessions.
 """,
             "progress.md": f"""# Progress — {prj_name}
 
-## Cosa funziona
-- Funzionalita' completate e verificate.
+## What Works
+- Verified and completed features.
 
-## Cosa manca
-- Funzionalita' pianificate o in sviluppo.
+## What's Left
+- Planned or in-progress features.
 
-## Problemi noti
-- Nessun blocco critico segnalato.
+## Known Issues
+- No critical blockers reported.
 """,
             "systemPatterns.md": f"""# System Patterns — {prj_name}
 
-## Architettura
-Descrizione dell'architettura generale e pattern utilizzati nel progetto.
+## Architecture
+Overview of system architecture and design patterns used in the project.
 
-## Convenzioni di codice
-- Stile e convenzioni del progetto.
+## Code Conventions
+- Project code style and practices.
 - Naming conventions.
 """,
             "techContext.md": f"""# Tech Context — {prj_name}
 
-## Stack tecnologico
-- Linguaggi:
-- Framework / Librerie:
-- Strumenti di build / deploy:
+## Technology Stack
+- Languages:
+- Frameworks / Libraries:
+- Build & Deployment Tools:
 
-## Comandi principali
-- Build / Esecuzione:
-- Test:
+## Primary Commands
+- Build / Run:
+- Tests:
 """
         }
 

@@ -7,6 +7,15 @@ print_visualvibe_banner() {
     local C0=$'\033[0m'
     local CN=$'\033[1;36m'
     local CL=$'\033[1;37m'
+    local CG=$'\033[1;32m'
+
+    local VV_VERSION=""
+    for vpath in "/opt/visualvibe/VERSION" "$(dirname "${BASH_SOURCE[0]}")/../VERSION"; do
+        if [ -f "$vpath" ]; then
+            VV_VERSION="$(cat "$vpath" 2>/dev/null | tr -d '[:space:]')"
+            [ -n "$VV_VERSION" ] && break
+        fi
+    done
 
     cat <<EOF
 
@@ -25,8 +34,13 @@ print_visualvibe_banner() {
  ${CN} ╚══════╝╚══════╝╚══════╝ ╚═════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝${C0}
 
  ${CL}      V I S U A L V I B E     E L E C T R O N     E N V I R O N M E N T     ${C0}
-
 EOF
+
+    if [ -n "$VV_VERSION" ]; then
+        printf "%s\n\n" " ${CG}                         v.${VV_VERSION}${C0}"
+    else
+        printf "\n"
+    fi
 }
 
 # If executed directly, run the function

@@ -1,0 +1,17 @@
+{
+  "name": "vv-update-checker",
+  "displayName": "VisualVibe Update Checker",
+  "description": "Background update checker for VisualVibe Electron",
+  "version": "1.0.0",
+  "publisher": "visualvibe",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "categories": [
+    "Other"
+  ]
+}

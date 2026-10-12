@@ -25,15 +25,21 @@ re-runs. (The Zoo Code extension dir is restored fresh from /opt on every boot b
 import sys, os, re
 
 sys.path.insert(0, "/opt/visualvibe/scripts/lib")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from vv_common import HOME, zoo_lang, latest_zoo_ext_dir
+try:
+    from patch_anchors import ZOO_ACTIVATE_ANCHOR_REGEX
+except ImportError:
+    ZOO_ACTIVATE_ANCHOR_REGEX = r"(async function [A-Za-z0-9_$]+\(([A-Za-z0-9_$]+)\)\{)([A-Za-z0-9_$]+)=\2,"
 
 # Versioned marker: bump when the injected snippet's shape changes.
 # v1 non-suffixed; v2 logging+always-overwrite; v3 removed welcome keys; v4 re-added
 # welcome keys always; v5 status file; v6 fixed anchor (was injecting into the wrong
 # function `pll` — see main() comment); v7 seeds Zoo Code settings (language from
 # AI_LANG, auto-approve everything except Question, preventFocusDisruption); v8 removes file logging to /tmp;
-# v9 disables auto-approval for mode switch (alwaysAllowModeSwitch=false).
-MARKER = "/*[VisualVibe profiles seed v9]*/"
+# v9 disables auto-approval for mode switch (alwaysAllowModeSwitch=false);
+# v10 enables image support (supportsImages=true) and re-enables mode switch auto-approval (alwaysAllowModeSwitch=true).
+MARKER = "/*[VisualVibe profiles seed v10]*/"
 
 # Seed snippet injected at the top of Zoo Code's activate() function. __CTX__ is
 # replaced with the activate() context parameter name found in the bundle.
@@ -45,7 +51,7 @@ SEED = (
     + 'if(process.env.AI_API_URL&&process.env.AI_API_KEY){'
     + 'const __u=process.env.AI_API_URL,__k=process.env.AI_API_KEY,'
     + '__mk=(id,m)=>({id,apiProvider:"openai",openAiBaseUrl:__u,openAiApiKey:__k,openAiModelId:m,'
-    + 'openAiCustomModelInfo:{maxTokens:null,maxThinkingTokens:null,contextWindow:1e6,supportsPromptCache:false}}),'
+    + 'openAiCustomModelInfo:{maxTokens:null,maxThinkingTokens:null,contextWindow:1e6,supportsImages:true,supportsPromptCache:false}}),'
     + '__cf={},__md={};'
     + '__cf["default"]=__mk("default","visualvibe-default");'
     + 'for(const[m,p]of[["architect","visualvibe-architect"],["code","visualvibe-code"],'
@@ -77,7 +83,7 @@ SEED = (
     + 'await __CTX__.globalState.update("deniedCommands",[]);'
     + 'await __CTX__.globalState.update("destructiveCommandGuardEnabled",false);'
     + 'await __CTX__.globalState.update("alwaysAllowMcp",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowModeSwitch",false);'
+    + 'await __CTX__.globalState.update("alwaysAllowModeSwitch",true);'
     + 'await __CTX__.globalState.update("alwaysAllowSubtasks",true);'
     + 'await __CTX__.globalState.update("alwaysAllowFollowupQuestions",false);'
     + 'await __CTX__.globalState.update("experiments",{preventFocusDisruption:true});'
@@ -108,15 +114,25 @@ def main():
     # Strip any older seed version so upgrades/re-runs cleanly replace the injection.
     s = re.sub(r'/\*\[VisualVibe profiles seed [^\]]+\]\*/.*?(catch\(__e0\)\{[^}]+\})', '', s)
 
-    # Activate() signature: async function NAME(CTX){oxi=CTX, ...  (CTX is stored globally as `oxi`).
-    # IMPORTANT: `oxi=CTX,` must be IMMEDIATELY after the opening brace. A non-greedy
-    # `.*?` here would wrongly match an earlier `async function pll(t){...}` (the
-    # Zoo Gateway auth callback) that does NOT assign `oxi` and never runs.
-    m = re.search(r"(async function [A-Za-z0-9_$]+\(([A-Za-z0-9_$]+)\)\{)oxi=\2,", s)
+    # Activate() signature:
+    # - Zoo Code 3.86.0: async function gll(t){oxi=t, ...  (context stored globally as `oxi`)
+    # - Zoo Code 3.88.0: async function lgl(t){F_i=t, ...  (context stored globally as `F_i`)
+    # First attempt: resolve activate via the bundle export `activate:()=>NAME`
+    m = None
+    m_exp = re.search(r"activate:\(\)=>([A-Za-z0-9_$]+)", s)
+    if m_exp:
+        act_fn = m_exp.group(1)
+        m = re.search(rf"(async function {re.escape(act_fn)}\(([A-Za-z0-9_$]+)\)\{{)([A-Za-z0-9_$]+)=\2,", s)
+
+    # Fallback to centralized ZOO_ACTIVATE_ANCHOR_REGEX
+    if not m:
+        m = re.search(ZOO_ACTIVATE_ANCHOR_REGEX, s)
+
     if not m:
         print("[Init] ERROR: Zoo Code activate() anchor not found; profiles seed NOT applied.")
         return
     ctx = m.group(2)
+    glob_var = m.group(3)
 
     seed = SEED.replace("__CTX__", ctx)
     # Inject right after the opening brace of activate().
@@ -128,7 +144,7 @@ def main():
     # Verify the injection actually landed (fail-loud if not).
     with open(ext_js, "r", encoding="utf-8", errors="replace") as f:
         check = f.read()
-    if MARKER in check and ("oxi=" + ctx + ",") in check:
+    if MARKER in check and (f"{glob_var}={ctx},") in check:
         print("[Init] Zoo Code profiles seed injected into extension.js (activate).")
     else:
         print("[Init] ERROR: profiles seed injection verification FAILED (marker/activate anchor missing).")

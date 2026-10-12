@@ -6,7 +6,7 @@ set -e
 
 mkdir -p /home/vvelectron/.local/share/code-server/User
 
-tee /home/vvelectron/.local/share/code-server/User/settings.json <<'SETTINGS_JSON'
+cat > /home/vvelectron/.local/share/code-server/User/settings.json <<SETTINGS_JSON
 {
   "window.title": "VisualVibe Electron",
   "editor.formatOnSave": false,
@@ -17,6 +17,8 @@ tee /home/vvelectron/.local/share/code-server/User/settings.json <<'SETTINGS_JSO
   "security.workspace.trust.startupPrompt": "never",
   "workbench.startupEditor": "none",
   "workbench.welcomePage.walkthroughs.openOnInstall": false,
+  "workbench.secondarySideBar.defaultVisibility": "visible",
+  "workbench.sideBar.location": "left",
   "workbench.colorTheme": "Default Dark Modern"
 }
 SETTINGS_JSON

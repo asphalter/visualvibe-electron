@@ -5,7 +5,7 @@
 Defines targets, expected anchor patterns, and verification tests for runtime
 patches applied to third-party code (code-server workbench and Zoo Code extension).
 
-Version: 1.2.0 (compatible with code-server 4.140.0 / Zoo Code 3.86.0)
+Version: 1.3.0 (compatible with code-server 4.140.0 / Zoo Code 3.88.0)
 """
 import os
 
@@ -63,6 +63,12 @@ WORKBENCH_PATCH_VERIFICATIONS = [
         "expected_substring": 'this.entry=null;if(false)this.entry='
     }
 ]
+
+# Zoo Code activate() injection anchor pattern
+# Matches async function activate(ctx) signature where the context param is assigned:
+# - Zoo Code 3.86.0: async function gll(t){oxi=t,
+# - Zoo Code 3.88.0: async function lgl(t){F_i=t,
+ZOO_ACTIVATE_ANCHOR_REGEX = r"(async function [A-Za-z0-9_$]+\(([A-Za-z0-9_$]+)\)\{)([A-Za-z0-9_$]+)=\2,"
 
 ZOO_CODE_VERIFICATIONS = [
     {

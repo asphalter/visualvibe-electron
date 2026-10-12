@@ -172,11 +172,11 @@ function buildHtml(workdirsRoot) {
         const isCurrent = p.path === currentPath;
         const targetUrl = `/?folder=${encodeURIComponent(p.path)}`;
         const badge = isCurrent
-            ? `<span class="badge active">Attivo</span>`
+            ? `<span class="badge active">Active</span>`
             : '';
         const btnHtml = isCurrent
-            ? `<button class="btn btn-current" disabled>In uso</button>`
-            : `<a class="btn" href="${targetUrl}" target="_top">Apri</a>`;
+            ? `<button class="btn btn-current" disabled>In use</button>`
+            : `<a class="btn" href="${targetUrl}" target="_top">Open</a>`;
 
         return `
         <div class="project-card ${isCurrent ? 'is-current' : ''}">
@@ -192,10 +192,10 @@ function buildHtml(workdirsRoot) {
 
     const contentHtml = projectCards.length > 0
         ? projectCards
-        : '<div class="empty-state">Nessun progetto trovato in VisualVibe Workdirs. Crea una cartella per iniziare.</div>';
+        : '<div class="empty-state">No projects found in VisualVibe Workdirs. Create a folder to get started.</div>';
 
     return `<!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -204,15 +204,15 @@ function buildHtml(workdirsRoot) {
 </head>
 <body>
     <div class="header-row">
-        <h3>Progetti VisualVibe</h3>
-        <button class="refresh-btn" id="refreshBtn" title="Aggiorna lista">
+        <h3>VisualVibe Projects</h3>
+        <button class="refresh-btn" id="refreshBtn" title="Refresh list">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                 <path fill-rule="evenodd" clip-rule="evenodd" d="M12.75 8a4.5 4.5 0 0 1-8.61 1.89l-1.39.48a6 6 0 1 0 1.25-6.52V2h1.5v4h-4V4.5h1.82A4.5 4.5 0 0 1 12.75 8z"/>
             </svg>
         </button>
     </div>
     <div class="info">
-        Aprire un singolo progetto isola la <strong>task history di Zoo Code</strong> e applica le sue regole e la <code>memory-bank/</code>.
+        Opening an individual project isolates the <strong>Zoo Code task history</strong> and applies project-specific rules and its <code>memory-bank/</code>.
     </div>
     <div class="project-list">
         ${contentHtml}

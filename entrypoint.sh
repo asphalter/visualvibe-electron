@@ -151,27 +151,98 @@ else
     CS_AUTH="none"
     CS_AUTH_LABEL="None (open — secure at perimeter via Cloudflare Access / VPN)"
 fi
+
+VV_APP_NAME="VisualVibe Electron"
+
 runuser -u vvelectron -- \
     env PASSWORD="${PASSWORD:-}" \
     code-server \
         --bind-addr 127.0.0.1:8080 \
         --auth "${CS_AUTH}" \
         --disable-telemetry \
-        --app-name "VisualVibe Electron" \
+        --app-name "${VV_APP_NAME}" \
     > /tmp/code-server.log 2>&1 &
 CS_PID=$!
 wait_for_http "http://127.0.0.1:8080/healthz" "code-server" 30 "/tmp/code-server.log" "$CS_PID"
 
-# 10. Start Caddy reverse proxy on plain HTTP (:80) with secure upstream forwarding
-echo "[Caddy] Starting Caddy reverse proxy on :80..."
+# 10. Configure TLS certificate for HTTPS (:443)
+# If both CERTFILE_PUBLIC and CERTFILE_PRIVATE are provided, deploy the custom certificate and key.
+# Otherwise, fall back to maintaining a persistent self-signed certificate with IP SANs.
+CERTS_DIR="/home/vvelectron/.config/caddy/certs"
+CERT_FILE="${CERTS_DIR}/cert.pem"
+KEY_FILE="${CERTS_DIR}/key.pem"
+CUSTOM_MARKER="${CERTS_DIR}/.is_custom"
+
+deploy_cert_material() {
+    local val="$1"
+    local dest="$2"
+
+    if [ -f "${val}" ]; then
+        cp -f "${val}" "${dest}"
+    elif printf "%s" "${val}" | grep -q -- "-----BEGIN"; then
+        printf "%s\n" "${val}" > "${dest}"
+    elif printf "%s" "${val}" | tr -d '\r\n ' | base64 -d 2>/dev/null | grep -q -- "-----BEGIN"; then
+        printf "%s" "${val}" | tr -d '\r\n ' | base64 -d > "${dest}"
+    else
+        # Fallback: attempt base64 decode if valid, otherwise write raw string
+        if ! printf "%s" "${val}" | tr -d '\r\n ' | base64 -d > "${dest}" 2>/dev/null || [ ! -s "${dest}" ]; then
+            printf "%s\n" "${val}" > "${dest}"
+        fi
+    fi
+    sed -i -e '$a\' "${dest}" 2>/dev/null || true
+}
+
+mkdir -p "${CERTS_DIR}"
+
+if [ -n "${CERTFILE_PUBLIC:-}" ] && [ -n "${CERTFILE_PRIVATE:-}" ]; then
+    deploy_cert_material "${CERTFILE_PUBLIC}" "${CERT_FILE}"
+    deploy_cert_material "${CERTFILE_PRIVATE}" "${KEY_FILE}"
+    chmod 600 "${KEY_FILE}"
+    chmod 644 "${CERT_FILE}"
+    chown -R vvelectron:vvelectron "${CERTS_DIR}"
+    touch "${CUSTOM_MARKER}"
+    echo "[Caddy TLS] Custom TLS certificate and private key deployed successfully from CERTFILE_PUBLIC / CERTFILE_PRIVATE."
+else
+    if [ -n "${CERTFILE_PUBLIC:-}" ] || [ -n "${CERTFILE_PRIVATE:-}" ]; then
+        echo "[Caddy TLS] Notice: Only one of CERTFILE_PUBLIC / CERTFILE_PRIVATE was set. Both are required for custom TLS. Falling back to self-signed certificate."
+    fi
+
+    if [ -f "${CUSTOM_MARKER}" ] || [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
+        rm -f "${CUSTOM_MARKER}" 2>/dev/null || true
+        echo "[Caddy] Generating persistent self-signed TLS certificate with IP SANs..."
+
+        # Build SAN string including loopback, local hostname, and all detected network IPs
+        SAN_ENTRIES="DNS:localhost,IP:127.0.0.1"
+        for ip in $(hostname -I 2>/dev/null); do
+            SAN_ENTRIES="${SAN_ENTRIES},IP:${ip}"
+        done
+
+        openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "${KEY_FILE}" \
+            -out "${CERT_FILE}" \
+            -days 3650 \
+            -subj "/CN=VisualVibe Electron" \
+            -addext "subjectAltName=${SAN_ENTRIES}" >/dev/null 2>&1
+
+        chmod 600 "${KEY_FILE}"
+        chmod 644 "${CERT_FILE}"
+        chown -R vvelectron:vvelectron "/home/vvelectron/.config/caddy"
+        echo "[Caddy] TLS certificate generated successfully (SAN: ${SAN_ENTRIES})."
+    else
+        echo "[Caddy] Reusing existing persistent TLS certificate at ${CERT_FILE}"
+    fi
+fi
+
+# 11. Start Caddy reverse proxy (:80 redirect -> :443 HTTPS with persistent TLS cert)
+echo "[Caddy] Starting Caddy reverse proxy (:80 -> :443 HTTPS)..."
 caddy run --config /opt/visualvibe/config/Caddyfile --adapter caddyfile > /tmp/caddy.log 2>&1 &
 CADDY_PID=$!
-wait_for_http "http://127.0.0.1:80/" "Caddy" 15 "/tmp/caddy.log" "$CADDY_PID"
+wait_for_http "http://127.0.0.1:80/" "Caddy (:80 redirect)" 15 "/tmp/caddy.log" "$CADDY_PID"
 
 echo "=========================================================="
 echo " VisualVibe Electron is ACTIVE and ready!"
-echo " Web IDE:       http://<host>/"
-echo " File Manager:  http://<host>/filebrowser/"
+echo " Web IDE:       https://<host>/ (o http://<host>:8000/ via reverse proxy)"
+echo " File Manager:  https://<host>/filebrowser/"
 echo " Auth:          ${CS_AUTH_LABEL}"
 echo "=========================================================="
 

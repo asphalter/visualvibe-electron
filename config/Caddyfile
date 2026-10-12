@@ -1,16 +1,27 @@
 # ==============================================================================
 # Caddyfile — VisualVibe Electron reverse proxy
 # ==============================================================================
-# Listens strictly on plain HTTP (:80) and routes:
+# Multi-listener architecture:
+#   :80   — Plain HTTP redirect to HTTPS (preserves host & URI)
+#   :443  — HTTPS via persistent self-signed certificate with IP SANs
+#   :8000 — Plain HTTP (no TLS, no redirect) for upstream reverse proxies (Cloudflare, etc.)
+#
+# Direct IP access in browsers requires a Secure Context (window.isSecureContext)
+# for VS Code Webviews (such as the Zoo Code sidebar) and Service Workers.
+# Serving HTTPS enables Secure Context for all clients (hostname and direct raw IP).
+#
+# Backend routes:
 #   /filebrowser/* → FileBrowser Quantum on 127.0.0.1:8081 (prefix preserved)
 #   /*             → code-server on 127.0.0.1:8080
-#
-# Communicates to the backends that the upstream connection is secure
-# (X-Forwarded-Proto: https) so code-server treats requests and webviews
-# as secure without requiring encryption/TLS inside the container.
 # ==============================================================================
 
 :80 {
+	redir https://{host}{uri} permanent
+}
+
+:443 {
+	tls /home/vvelectron/.config/caddy/certs/cert.pem /home/vvelectron/.config/caddy/certs/key.pem
+
 	# Compression for the workbench static assets.
 	encode zstd gzip
 
@@ -41,29 +52,72 @@
 	handle /filebrowser/* {
 		reverse_proxy 127.0.0.1:8081 {
 			header_up Host {host}
-			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-Proto https
 		}
 	}
 
-	# code-server: workbench.js force revalidation + secure upstream headers
-	handle /stable-*/static/out/vs/code/browser/workbench/workbench.js {
+	# code-server: workbench.js force revalidation
+	handle /stable-*/out/vs/code/browser/workbench/workbench.js {
+		header Cache-Control "no-cache, must-revalidate"
 		reverse_proxy 127.0.0.1:8080 {
-			header_down Cache-Control "no-cache"
 			header_up Host {host}
-			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Port 443
 		}
 	}
 
-	# code-server Web IDE: catch-all
+	# code-server catch-all
 	handle {
 		reverse_proxy 127.0.0.1:8080 {
 			header_up Host {host}
-			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-Proto https
-			header_up X-Forwarded-Port 443
+		}
+	}
+}
+
+:8000 {
+	# Plain HTTP — for upstream reverse proxies (Cloudflare, nginx, etc.) terminating TLS externally.
+	# No redirect, no TLS. Content is identical to the :443 listener.
+	encode zstd gzip
+
+	# Baseline security headers (perimeter security model: auth is enforced upstream).
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# Redirect bare /filebrowser → /filebrowser/ (Caddy-side convenience redirect)
+	redir /filebrowser /filebrowser/ permanent
+
+	# FileBrowser Quantum custom branding
+	handle /filebrowser/public/static/favicon.svg {
+		rewrite * /favicon.svg
+		root * /opt/visualvibe/media
+		file_server
+	}
+
+	handle /filebrowser/public/static/site.webmanifest {
+		header Content-Type application/manifest+json
+		rewrite * /filebrowser.webmanifest
+		root * /opt/visualvibe/config
+		file_server
+	}
+
+	# FileBrowser Quantum: forward full path to backend
+	handle /filebrowser/* {
+		reverse_proxy 127.0.0.1:8081 {
+			header_up Host {host}
+		}
+	}
+
+	# code-server: workbench.js force revalidation
+	handle /stable-*/out/vs/code/browser/workbench/workbench.js {
+		header Cache-Control "no-cache, must-revalidate"
+		reverse_proxy 127.0.0.1:8080 {
+			header_up Host {host}
+		}
+	}
+
+	# code-server catch-all
+	handle {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up Host {host}
 		}
 	}
 }

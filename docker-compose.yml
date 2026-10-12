@@ -23,7 +23,9 @@ services:
     restart: unless-stopped
 
     ports:
-      - "8182:80"
+      - "80:80"
+      - "443:443"
+      - "8000:8000"
 
     privileged: true
     shm_size: "2gb"
@@ -37,12 +39,18 @@ services:
       AI_LANG: "it"
       # --- Web IDE password: set to enable password auth, leave empty for open access ---
       PASSWORD: ""
+      # --- Custom TLS Certificate (OPTIONAL) ---
+      # Both CERTFILE_PUBLIC and CERTFILE_PRIVATE must be provided for custom TLS to be deployed.
+      # If omitted or only one is set, VisualVibe falls back to persistent self-signed TLS with IP SANs.
+      # Supported formats: path to container file (e.g. via volume), raw PEM content, or base64 string.
+      # CERTFILE_PUBLIC: "/certs/fullchain.pem"
+      # CERTFILE_PRIVATE: "/certs/privkey.pem"
 
     volumes:
       - visualvibe_github_data:/home/vvelectron
 
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsSo /dev/null http://localhost/ && curl -fsSo /dev/null http://localhost/filebrowser/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsSko /dev/null https://localhost/ && curl -fsSko /dev/null https://localhost/filebrowser/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

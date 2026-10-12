@@ -10,3 +10,6 @@ fi
 if [ -d /opt/visualvibe/extensions/vv-project-picker ]; then
     mv /opt/visualvibe/extensions/vv-project-picker /opt/visualvibe/extensions/visualvibe.vv-project-picker-1.0.0
 fi
+if [ -d /opt/visualvibe/extensions/vv-update-checker ]; then
+    mv /opt/visualvibe/extensions/vv-update-checker /opt/visualvibe/extensions/visualvibe.vv-update-checker-1.0.0
+fi

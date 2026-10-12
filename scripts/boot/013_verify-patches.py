@@ -71,9 +71,9 @@ def verify_zoo():
         try:
             with open(ext_js, "r", encoding="utf-8", errors="replace") as f:
                 js_content = f.read()
-            marker = "/*[VisualVibe profiles seed v8]*/"
+            marker = "/*[VisualVibe profiles seed v10]*/"
             if marker not in js_content:
-                # Also accept v7 if not yet refreshed by boot cycle
+                # Also accept older versions if not yet refreshed by boot cycle
                 if "/*[VisualVibe profiles seed" not in js_content:
                     failures.append(f"Zoo Code extension.js missing profiles seed marker ({marker})")
         except Exception as err:

@@ -35,6 +35,7 @@ RUN dnf install -y \
     tar \
     gzip \
     xz \
+    openssl \
     python3 \
     python3-pip \
     gcc \
@@ -112,6 +113,7 @@ RUN mkdir -p /opt/visualvibe /opt/visualvibe/config /opt/visualvibe/media /opt/v
 COPY config/  /opt/visualvibe/config/
 COPY media/   /opt/visualvibe/media/
 COPY scripts/ /opt/visualvibe/scripts/
+COPY VERSION /opt/visualvibe/VERSION
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     && chmod -R +x /opt/visualvibe/scripts/ \
@@ -135,8 +137,8 @@ RUN mkdir -p /etc/containers \
 # 12. Apply VisualVibe branding (favicons + PWA icons + manifest + workbench icon/CSS)
 RUN bash /opt/visualvibe/scripts/build/004_branding.sh
 
-# 13. Expose single public port (Caddy reverse proxy)
-EXPOSE 80
+# 13. Expose public ports (Caddy reverse proxy: 80 HTTP redirect, 443 HTTPS, 8000 plain HTTP)
+EXPOSE 80 443 8000
 
 # Working directory
 WORKDIR /home/vvelectron
