@@ -1,0 +1,70 @@
+# ==============================================================================
+# VisualVibe Electron — KasmVNC Configuration
+# ==============================================================================
+# Compatible with KasmVNC 1.3.3
+# Optimized for remote desktop coding with VSCodium + Zoo Code:
+# - Sharp 1:1 text rendering (dynamic resize allowed)
+# - High-quality adaptive encoding capped at 30 FPS
+# - TLS certificates aligned with Caddy-generated self-signed certificates
+# - Non-interactive CLI (prompt: false)
+# ==============================================================================
+---
+desktop:
+  resolution:
+    width: 1920
+    height: 1080
+  allow_resize: true
+  pixel_depth: 24
+
+network:
+  protocol: http
+  interface: 127.0.0.1
+  websocket_port: 8444
+  use_ipv4: true
+  use_ipv6: false
+  ssl:
+    require_ssl: false
+    pem_certificate: /home/vvelectron/.config/caddy/certs/cert.pem
+    pem_key: /home/vvelectron/.config/caddy/certs/key.pem
+
+encoding:
+  max_frame_rate: 30
+  full_frame_updates: none
+  rect_encoding_mode:
+    min_quality: 7
+    max_quality: 9
+    consider_lossless_quality: 9
+    rectangle_compress_threads: auto
+  video_encoding_mode:
+    jpeg_quality: -1
+    webp_quality: 8
+    max_resolution:
+      width: 3840
+      height: 2160
+    enter_video_encoding_mode:
+      time_threshold: 3
+      area_threshold: 35%
+    exit_video_encoding_mode:
+      time_threshold: 2
+    logging:
+      level: off
+    scaling_algorithm: progressive_bilinear
+
+data_loss_prevention:
+  clipboard:
+    delay_between_operations: none
+    server_to_client:
+      enabled: true
+      size: unlimited
+      primary_clipboard_enabled: false
+    client_to_server:
+      enabled: true
+      size: unlimited
+
+logging:
+  log_writer_name: all
+  log_dest: logfile
+  level: 30
+
+command_line:
+  prompt: false

@@ -1,6 +1,6 @@
-// VisualVibe Projects — Quick project picker for code-server
+// VisualVibe Projects — Quick project picker for VisualVibe Electron (VSCodium)
 // Lists all project directories in "VisualVibe Workdirs" and opens each as an
-// isolated workspace root (?folder=...) so Zoo Code sessions remain separate per project.
+// isolated workspace root so Zoo Code sessions remain separate per project.
 'use strict';
 
 const vscode = require('vscode');
@@ -67,6 +67,41 @@ function scanProjects(workdirsRoot) {
 
 function getCurrentFolderPath() {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+}
+
+function resolveProjectPath(arg) {
+    if (!arg) return '';
+    if (typeof arg === 'string') return arg;
+    if (arg instanceof vscode.Uri) return arg.fsPath;
+    if (typeof arg === 'object') {
+        if (arg.fsPath) return resolveProjectPath(arg.fsPath);
+        if (arg.projectPath) return resolveProjectPath(arg.projectPath);
+        if (arg.path) return resolveProjectPath(arg.path);
+        if (arg.resourceUri) return resolveProjectPath(arg.resourceUri);
+        if (arg.uri) return resolveProjectPath(arg.uri);
+    }
+    return '';
+}
+
+async function openProject(arg) {
+    const targetPath = resolveProjectPath(arg);
+    console.log('[VisualVibe Projects] openProject requested:', targetPath);
+    if (!targetPath) {
+        vscode.window.showErrorMessage('VisualVibe Projects: unable to determine project path.');
+        return;
+    }
+    if (!fs.existsSync(targetPath)) {
+        vscode.window.showErrorMessage(`VisualVibe Projects: project folder not found: ${targetPath}`);
+        return;
+    }
+    try {
+        await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(targetPath), false);
+        vscode.window.showInformationMessage(`VisualVibe Projects: opened ${path.basename(targetPath)}`);
+    } catch (err) {
+        console.error('[VisualVibe Projects] openFolder error:', err);
+        const detail = err && err.message ? err.message : String(err);
+        vscode.window.showErrorMessage(`VisualVibe Projects: failed to open ${targetPath}: ${detail}`);
+    }
 }
 
 function escapeHtml(text) {
@@ -170,13 +205,12 @@ function buildHtml(workdirsRoot) {
 
     const projectCards = projects.map(p => {
         const isCurrent = p.path === currentPath;
-        const targetUrl = `/?folder=${encodeURIComponent(p.path)}`;
         const badge = isCurrent
             ? `<span class="badge active">Active</span>`
             : '';
         const btnHtml = isCurrent
             ? `<button class="btn btn-current" disabled>In use</button>`
-            : `<a class="btn" href="${targetUrl}" target="_top">Open</a>`;
+            : `<button class="btn open-project" data-path="${escapeHtml(p.path)}">Open</button>`;
 
         return `
         <div class="project-card ${isCurrent ? 'is-current' : ''}">
@@ -212,7 +246,7 @@ function buildHtml(workdirsRoot) {
         </button>
     </div>
     <div class="info">
-        Opening an individual project isolates the <strong>Zoo Code task history</strong> and applies project-specific rules and its <code>memory-bank/</code>.
+        Opening an individual project isolates the <strong>Zoo Code task history</strong> and applies project-specific rules.
     </div>
     <div class="project-list">
         ${contentHtml}
@@ -221,6 +255,11 @@ function buildHtml(workdirsRoot) {
         const vscode = acquireVsCodeApi();
         document.getElementById('refreshBtn').addEventListener('click', () => {
             vscode.postMessage({ command: 'refresh' });
+        });
+        document.querySelectorAll('.open-project').forEach(btn => {
+            btn.addEventListener('click', () => {
+                vscode.postMessage({ command: 'openProject', projectPath: btn.dataset.path });
+            });
         });
     </script>
 </body>
@@ -250,6 +289,8 @@ function activate(context) {
             webviewView.webview.onDidReceiveMessage(message => {
                 if (message?.command === 'refresh') {
                     updateWebview();
+                } else if (message?.command === 'openProject') {
+                    openProject(message.projectPath);
                 }
             });
 

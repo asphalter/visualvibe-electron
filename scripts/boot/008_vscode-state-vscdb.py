@@ -1,129 +1,130 @@
 #!/usr/bin/env python3
 """
-008_vscode-state-vscdb.py — boot — configure VS Code globalStorage/state.vscdb with the
+008_vscode-state-vscdb.py — boot — configure VSCodium globalStorage/state.vscdb with the
 Secondary Side Bar layout (Zoo Code on the right) and the Activity Bar pinned viewlets
 order (VisualVibe Projects first); then migrate & enforce the layout on all existing
-workspaceStorage DBs. (Zoo Code language is seeded by 011_zoo-seed-profiles.py.)
+workspaceStorage DBs.
 """
 import sys, os
 sys.path.insert(0, "/opt/visualvibe/scripts/lib")
-from vv_common import HOME
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
+try:
+    from vv_common import VV_HOME, VV_WORKDIRS, VSCODIUM_DATA, VSCODIUM_USER_DIR
+except ImportError:
+    VV_HOME = os.path.expanduser("~")
+    VV_WORKDIRS = os.path.join(VV_HOME, "VisualVibe Workdirs")
+    VSCODIUM_DATA = os.path.join(VV_HOME, ".vscode-oss")
+    VSCODIUM_USER_DIR = os.path.join(VV_HOME, ".config/VSCodium/User")
 import json
 import glob
 import sqlite3
 
-db_dir  = os.path.join(HOME, ".local/share/code-server/User/globalStorage")
-db_path = os.path.join(db_dir, "state.vscdb")
-os.makedirs(db_dir, exist_ok=True)
+target_dirs = [
+    VSCODIUM_USER_DIR,
+    os.path.join(VV_HOME, ".config/Code/User"),
+    VSCODIUM_DATA,
+]
 
-try:
-    conn = sqlite3.connect(db_path)
-    cur  = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+aux_panel_id = "workbench.view.extension.zoo-code-ActivityBar"
+pinned_panels = [{"id": aux_panel_id, "pinned": True, "visible": True, "order": 0}]
 
-    aux_panel_id = "workbench.view.extension.zoo-code-ActivityBar"
-    pinned_panels = [{"id": aux_panel_id, "pinned": True, "visible": True, "order": 0}]
+# Pinned Activity Bar order: Projects Picker first, then Explorer, Search, Source Control
+# Zoo Code is explicitly NOT included in the Primary Activity Bar
+pinned_viewlets = [
+    {"id": "workbench.view.extension.visualvibe-projects", "pinned": True, "visible": True, "order": 0},
+    {"id": "workbench.view.explorer", "pinned": True, "visible": True, "order": 1},
+    {"id": "workbench.view.search", "pinned": True, "visible": True, "order": 2},
+    {"id": "workbench.view.scm", "pinned": True, "visible": True, "order": 3}
+]
 
-    items = {}
+views_customizations = {
+    "viewContainerLocations": {
+        aux_panel_id: 2,
+        "zoo-code-ActivityBar": 2
+    },
+    "viewLocations": {
+        "zoo-code.SidebarProvider": aux_panel_id
+    },
+    "viewContainerBadgeEnablementStates": {}
+}
 
-    # Note: Zoo Code "Configuration Profiles" are NOT seeded here. They live in VS Code
-    # SecretStorage (context.secrets, key "roo_cline_config_api_config"), which code-server
-    # does not expose via state.vscdb (no OS keyring → in-memory/browser-encrypted). The
-    # profiles are instead seeded by 011_zoo-seed-profiles.py, which patches Zoo Code's
-    # extension.js to write them from AI_API_URL/AI_API_KEY at activation time.
+common_items = {
+    # Layout and visibility
+    "auxiliaryBar.hidden": "false",
+    "workbench.auxiliarybar.hidden": "false",
+    "workbench.auxiliaryBar.hidden": "false",
+    "workbench.secondarySideBar.visible": "true",
+    "workbench.secondarySideBar.active": "true",
+    "workbench.secondarySideBar.defaultVisibility": "visible",
+    "workbench.sideBar.hidden": "false",
+    "workbench.activityBar.visible": "true",
+    "welcomeOnboarding.state": "true",
+    "auxiliaryBar.size": "350",
 
-    # Layout: Secondary Side Bar (right) hosts Zoo Code; primary sidebar visible
-    items["workbench.auxiliarybar.pinnedPanels"] = json.dumps(pinned_panels)
-    items["workbench.auxiliarybar.activepanelid"] = json.dumps(aux_panel_id)
-    items["workbench.auxiliarybar.hidden"] = "false"
-    items["workbench.auxiliaryBar.hidden"] = "false"
-    items["workbench.secondarySideBar.visible"] = "true"
-    items["workbench.sideBar.hidden"] = "false"
-    items["workbench.sidebar.hidden"] = "false"
-    items["welcomeOnboarding.state"] = "true"
+    # Secondary Side Bar pinned panels and active item
+    "workbench.auxiliarybar.pinnedPanels": json.dumps(pinned_panels),
+    "workbench.secondarySideBar.pinnedPanels": json.dumps(pinned_panels),
+    "workbench.panel.pinnedPanels": json.dumps(pinned_panels),
+    "workbench.auxiliarybar.activepanelid": json.dumps(aux_panel_id),
+    "workbench.auxiliarybar.viewContainersWorkspaceState": json.dumps([{"id": aux_panel_id, "visible": True}]),
 
-    # NOTE: pinnedViewlets2/placeholderViewlets below are best-effort only — in
-    # code-server the real Activity Bar order lives in the browser's IndexedDB and is
-    # enforced by 004_patch-workbench-activitybar.py (JS patches on workbench.js).
-    # Layout: Primary Activity Bar order (visualvibe-projects as FIRST icon, order: 0)
-    pinned_viewlets = [
-        {"id": "workbench.view.extension.visualvibe-projects", "pinned": True, "visible": True, "order": 0},
-        {"id": "workbench.view.explorer",                      "pinned": True, "visible": True, "order": 1},
-        {"id": "workbench.view.search",                        "pinned": True, "visible": True, "order": 2},
-        {"id": "workbench.view.scm",                           "pinned": True, "visible": True, "order": 3},
-        {"id": "workbench.view.debug",                         "pinned": True, "visible": True, "order": 4},
-        {"id": "workbench.view.extensions",                    "pinned": True, "visible": True, "order": 5},
-        {"id": "workbench.view.extension.visualvibe-nav",      "pinned": True, "visible": True, "order": 6},
-    ]
-    items["workbench.activity.pinnedViewlets2"] = json.dumps(pinned_viewlets)
+    # View customizations routing Zoo Code to Secondary Side Bar (location 2 = AuxiliaryBar)
+    "views.customizations": json.dumps(views_customizations),
+    "views.cachedViewContainerLocations": json.dumps([[aux_panel_id, 2], ["zoo-code-ActivityBar", 2]]),
+    "views.cachedViewPositions": json.dumps([["zoo-code.SidebarProvider", {"containerId": aux_panel_id, "order": 0}]]),
 
-    # Pre-register placeholder viewlets so code-server places visualvibe-projects first during early startup
-    placeholder_viewlets = [
-        {"id": "workbench.view.extension.visualvibe-projects", "name": "Projects", "isBuiltin": False, "views": []},
-        {"id": "workbench.view.explorer",                      "name": "Explorer", "isBuiltin": True,  "views": []},
-        {"id": "workbench.view.search",                        "name": "Search",   "isBuiltin": True,  "views": []},
-        {"id": "workbench.view.scm",                           "name": "SCM",      "isBuiltin": True,  "views": []},
-        {"id": "workbench.view.debug",                         "name": "Debug",    "isBuiltin": True,  "views": []},
-        {"id": "workbench.view.extensions",                    "name": "Extensions", "isBuiltin": True, "views": []},
-        {"id": "workbench.view.extension.visualvibe-nav",      "name": "Navigator",  "isBuiltin": False, "views": [{"when": ""}]},
-    ]
-    items["workbench.activity.placeholderViewlets"] = json.dumps(placeholder_viewlets)
+    # Primary Activity Bar pinned items (excluding Zoo Code)
+    "workbench.activity.pinnedViewlets2": json.dumps(pinned_viewlets),
+}
 
-    for k, v in items.items():
-        cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", (k, v))
+def apply_items_to_db(db_path):
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)")
 
-    conn.commit()
-    conn.close()
-    print("[Init] Zoo Code state & layout pre-configured in state.vscdb.")
+        for k, v in common_items.items():
+            cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", (k, v))
 
-    # ── Migrate and enforce sidebar visibility & pinned viewlets on all existing workspaces ──
-    ws_dbs = glob.glob(os.path.join(HOME, ".local/share/code-server/User/workspaceStorage/*/state.vscdb"))
-    for ws_db in ws_dbs:
-        try:
-            ws_conn = sqlite3.connect(ws_db)
-            ws_cur = ws_conn.cursor()
-            ws_cur.execute("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+        conn.commit()
+        conn.close()
+        print(f"[Init] Successfully configured Secondary Side Bar & Activity Bar in {db_path}")
+    except Exception as e:
+        print(f"[Init] Warning configuring state.vscdb in {db_path}: {e}")
 
-            ws_cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('workbench.sideBar.hidden', 'false')")
-            ws_cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('workbench.sidebar.hidden', 'false')")
-            ws_cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('workbench.auxiliaryBar.hidden', 'false')")
-            ws_cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('workbench.auxiliarybar.hidden', 'false')")
-            ws_cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('workbench.secondarySideBar.visible', 'true')")
-            ws_cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('welcomeOnboarding.state', 'true')")
+def seed_global_recent_paths(global_db):
+    try:
+        conn = sqlite3.connect(global_db)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+        cur.execute("SELECT value FROM ItemTable WHERE key = 'history.recentlyOpenedPathsList'")
+        row = cur.fetchone()
+        if not row:
+            recent_data = {
+                "entries": [
+                    {"folderUri": f"file://{VV_WORKDIRS.replace(' ', '%20')}"}
+                ]
+            }
+            cur.execute(
+                "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('history.recentlyOpenedPathsList', ?)",
+                (json.dumps(recent_data),)
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[vscode-state] Warning: failed to seed recent paths in {global_db}: {e}")
 
-            row = ws_cur.execute("SELECT value FROM ItemTable WHERE key='workbench.activity.pinnedViewlets2'").fetchone()
-            if row and row[0]:
-                try:
-                    pv_list = json.loads(row[0])
-                    if isinstance(pv_list, list):
-                        proj_entry = None
-                        remaining = []
-                        for entry in pv_list:
-                            if isinstance(entry, dict) and entry.get("id") == "workbench.view.extension.visualvibe-projects":
-                                proj_entry = entry
-                            else:
-                                remaining.append(entry)
-                        if not proj_entry:
-                            proj_entry = {"id": "workbench.view.extension.visualvibe-projects", "pinned": True, "visible": True}
-                        proj_entry["order"] = 0
-                        proj_entry["pinned"] = True
-                        proj_entry["visible"] = True
+for user_dir in target_dirs:
+    # 1. Global storage DB
+    global_db = os.path.join(user_dir, "globalStorage", "state.vscdb")
+    apply_items_to_db(global_db)
+    seed_global_recent_paths(global_db)
 
-                        reordered = [proj_entry]
-                        for idx, entry in enumerate(remaining, start=1):
-                            if isinstance(entry, dict):
-                                entry["order"] = idx
-                            reordered.append(entry)
+    # 2. Profiles DBs if any
+    for prof_db in glob.glob(os.path.join(user_dir, "profiles/*/state.vscdb")):
+        apply_items_to_db(prof_db)
 
-                        ws_cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('workbench.activity.pinnedViewlets2', ?)", (json.dumps(reordered),))
-                except Exception:
-                    pass
-
-            ws_conn.commit()
-            ws_conn.close()
-        except Exception as ws_err:
-            print(f"[Init] Warning: Could not update workspace DB {ws_db}: {ws_err}")
-    if ws_dbs:
-        print(f"[Init] Enforced sidebar visibility and layout on {len(ws_dbs)} existing workspaceStorage DBs.")
-except Exception as e:
-    print(f"[Init] Warning: Could not configure Zoo Code state DB: {e}")
+    # 3. Workspace storage DBs
+    for ws_db in glob.glob(os.path.join(user_dir, "workspaceStorage/*/state.vscdb")):
+        apply_items_to_db(ws_db)

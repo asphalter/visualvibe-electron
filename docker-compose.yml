@@ -3,10 +3,10 @@
 # ==============================================================================
 # Aligned with the Podman Quadlet configuration (quadlet/visualvibe-electron.container):
 #   - Privileged mode (required for nested Podman-in-Podman runtime)
-#   - 2GB /dev/shm (Chromium headless)
+#   - 2GB /dev/shm (Xvfb & VSCodium Chromium runtime)
 #   - Persistent named volume mounted at /home/vvelectron
 #   - Mandatory AI_* environment variables (container aborts on startup if empty)
-#   - Healthcheck testing both code-server root and FileBrowser via Caddy
+#   - Healthcheck testing both KasmVNC root and FileBrowser via Caddy
 #
 # Usage:
 #   docker compose up -d --build
@@ -37,8 +37,6 @@ services:
       AI_API_URL: "http://127.0.0.1:20128/v1"
       AI_API_KEY: "sk-placeholder-ffffff-ffffff"
       AI_LANG: "it"
-      # --- Web IDE password: set to enable password auth, leave empty for open access ---
-      PASSWORD: ""
       # --- Custom TLS Certificate (OPTIONAL) ---
       # Both CERTFILE_PUBLIC and CERTFILE_PRIVATE must be provided for custom TLS to be deployed.
       # If omitted or only one is set, VisualVibe falls back to persistent self-signed TLS with IP SANs.

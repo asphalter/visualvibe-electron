@@ -1,5 +1,5 @@
 [Unit]
-Description=VisualVibe Electron — AI-powered Web IDE
+Description=VisualVibe Electron — AI-powered Remote Desktop IDE
 After=network-online.target
 Wants=network-online.target
 
@@ -17,9 +17,6 @@ PodmanArgs=--privileged
 
 # --- Resource allocation ---
 ShmSize=2g
-
-# --- Web IDE password: set to enable password auth, leave empty for open access (perimeter security model) ---
-Environment=PASSWORD=
 
 # --- AI Agent Configuration (MANDATORY) ---
 # IMPORTANT: fill the three values below BEFORE enabling this unit — the container
@@ -43,7 +40,7 @@ Environment=AI_LANG=
 # --- Persistent volume for /home/vvelectron ---
 Volume=visualvibe-home.volume:/home/vvelectron
 
-# --- Health check (verifies both code-server root and FileBrowser via Caddy) ---
+# --- Health check (verifies both KasmVNC root and FileBrowser via Caddy) ---
 HealthCmd=curl -fsSko /dev/null https://localhost/ && curl -fsSko /dev/null https://localhost/filebrowser/ || exit 1
 HealthInterval=30s
 HealthRetries=3

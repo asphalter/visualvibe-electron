@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # ==============================================================================
-# run_env.sh — Launch VisualVibe Electron Web Environment (code-server IDE)
+# run_env.sh — Launch VisualVibe Electron Web Environment (Remote Desktop IDE)
 #
 # Usage:
 #   ./run_env.sh                              # Launch on default port 80
 #   VISUALVIBE_PORT=9090 ./run_env.sh         # Launch on custom port
 #
 # Key Features:
-#   - Web-Native IDE (VS Code) via code-server, proxied by Caddy on port 80
-#   - Auth: password if PASSWORD env var is set, open (no auth) if empty/unset
+#   - Web Remote Desktop (VSCodium + Openbox + KasmVNC), proxied by Caddy on port 80
+#   - Auth: open (perimeter security model)
 #   - Web File Manager (Upload/Download) integrated into side panel
 #   - Unauthenticated container access (secure with your own reverse proxy / tunnel)
 #   - VS Code + Zoo Code extension with configurable AI agent endpoint
@@ -137,7 +137,6 @@ podman run -d \
     -e AI_API_URL="${AI_API_URL}" \
     -e AI_API_KEY="${AI_API_KEY}" \
     -e AI_LANG="${AI_LANG}" \
-    -e PASSWORD="${PASSWORD:-}" \
     -v "${VOLUME_NAME}:/home/vvelectron" \
     -p "${HOST_PORT}:80" \
     "${IMAGE_NAME}" < /dev/null
@@ -155,13 +154,13 @@ echo ""
 echo -e "  ${CYAN}Web Browser Access:${NC}"
 echo -e "    VisualVibe Electron:     ${BOLD}http://localhost:${HOST_PORT}/${NC}"
 echo -e "    FileBrowser Quantum:  ${BOLD}http://localhost:${HOST_PORT}/filebrowser/${NC}"
-echo -e "    Authentication:   ${PASSWORD:+Password (PASSWORD is set)}${PASSWORD:-None (open \u2014 set PASSWORD env var to enable)}"
-echo -e "    Proxy:            Caddy routes /filebrowser/* → :8081, all else → :8080"
+echo -e "    Authentication:   None (open \u2014 perimeter security model)"
+echo -e "    Proxy:            Caddy routes /filebrowser/* → loopback 127.0.0.1:8081, all else → KasmVNC loopback 127.0.0.1:8444"
 echo ""
 echo -e "  ${CYAN}Environment Features:${NC}"
-echo -e "    ✓ Base OS: AlmaLinux 10 (English en_US.UTF-8 locale)"
+echo -e "    ✓ Base OS: AlmaLinux 9 (English en_US.UTF-8 locale)"
 echo -e "    ✓ Reverse Proxy: Caddy on port ${HOST_PORT}"
-echo -e "    ✓ IDE: code-server (VS Code in browser) with Zoo Code AI agent extension"
+echo -e "    ✓ IDE: VSCodium + Openbox + KasmVNC with Zoo Code AI agent extension"
 echo -e "    ✓ Container runtime: Rootless Podman-in-Podman (/dev/fuse + fuse-overlayfs)"
 echo -e "    ✓ Resources: Unrestricted CPU & RAM (Host defaults)"
 echo -e "    ✓ Persistence: Volume '${VOLUME_NAME}' mounted at /home/vvelectron"

@@ -7,12 +7,12 @@
 #   :8000 — Plain HTTP (no TLS, no redirect) for upstream reverse proxies (Cloudflare, etc.)
 #
 # Direct IP access in browsers requires a Secure Context (window.isSecureContext)
-# for VS Code Webviews (such as the Zoo Code sidebar) and Service Workers.
+# for clipboard, service workers, and modern Web APIs.
 # Serving HTTPS enables Secure Context for all clients (hostname and direct raw IP).
 #
 # Backend routes:
 #   /filebrowser/* → FileBrowser Quantum on 127.0.0.1:8081 (prefix preserved)
-#   /*             → code-server on 127.0.0.1:8080
+#   /*             → KasmVNC Web / WebSocket on 127.0.0.1:8444
 # ==============================================================================
 
 :80 {
@@ -22,7 +22,7 @@
 :443 {
 	tls /home/vvelectron/.config/caddy/certs/cert.pem /home/vvelectron/.config/caddy/certs/key.pem
 
-	# Compression for the workbench static assets.
+	# Compression for static assets (disabled on WebSocket streaming).
 	encode zstd gzip
 
 	# Baseline security headers (perimeter security model: auth is enforced upstream).
@@ -33,6 +33,25 @@
 
 	# Redirect bare /filebrowser → /filebrowser/ (Caddy-side convenience redirect)
 	redir /filebrowser /filebrowser/ permanent
+
+	# Direct Favicon routes for browser tab & bookmarks
+	handle /favicon.ico {
+		rewrite * /favicon.ico
+		root * /opt/visualvibe/media
+		file_server
+	}
+
+	handle /favicon.svg {
+		rewrite * /favicon.svg
+		root * /opt/visualvibe/media
+		file_server
+	}
+
+	handle /apple-touch-icon.png {
+		rewrite * /apple-touch-icon.png
+		root * /opt/visualvibe/media
+		file_server
+	}
 
 	# FileBrowser Quantum custom branding
 	handle /filebrowser/public/static/favicon.svg {
@@ -48,42 +67,56 @@
 		file_server
 	}
 
-	# FileBrowser Quantum: forward full path to backend
+	handle /filebrowser/public/static/img/icons/* {
+		uri strip_prefix /filebrowser/public/static/img/icons
+		root * /opt/visualvibe/media
+		file_server
+	}
+
+	# FileBrowser application route
 	handle /filebrowser/* {
-		reverse_proxy 127.0.0.1:8081 {
-			header_up Host {host}
-		}
+		reverse_proxy 127.0.0.1:8081
 	}
 
-	# code-server: workbench.js force revalidation
-	handle /stable-*/out/vs/code/browser/workbench/workbench.js {
-		header Cache-Control "no-cache, must-revalidate"
-		reverse_proxy 127.0.0.1:8080 {
-			header_up Host {host}
-		}
-	}
-
-	# code-server catch-all
+	# KasmVNC Desktop Web & WebSocket route (root fallback)
 	handle {
-		reverse_proxy 127.0.0.1:8080 {
-			header_up Host {host}
+		reverse_proxy 127.0.0.1:8444 {
+			flush_interval -1
 		}
 	}
 }
 
 :8000 {
-	# Plain HTTP — for upstream reverse proxies (Cloudflare, nginx, etc.) terminating TLS externally.
-	# No redirect, no TLS. Content is identical to the :443 listener.
+	# Compression for static assets
 	encode zstd gzip
 
-	# Baseline security headers (perimeter security model: auth is enforced upstream).
+	# Baseline security headers
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 	}
 
-	# Redirect bare /filebrowser → /filebrowser/ (Caddy-side convenience redirect)
+	# Redirect bare /filebrowser → /filebrowser/
 	redir /filebrowser /filebrowser/ permanent
+
+	# Direct Favicon routes for browser tab & bookmarks
+	handle /favicon.ico {
+		rewrite * /favicon.ico
+		root * /opt/visualvibe/media
+		file_server
+	}
+
+	handle /favicon.svg {
+		rewrite * /favicon.svg
+		root * /opt/visualvibe/media
+		file_server
+	}
+
+	handle /apple-touch-icon.png {
+		rewrite * /apple-touch-icon.png
+		root * /opt/visualvibe/media
+		file_server
+	}
 
 	# FileBrowser Quantum custom branding
 	handle /filebrowser/public/static/favicon.svg {
@@ -99,25 +132,21 @@
 		file_server
 	}
 
-	# FileBrowser Quantum: forward full path to backend
+	handle /filebrowser/public/static/img/icons/* {
+		uri strip_prefix /filebrowser/public/static/img/icons
+		root * /opt/visualvibe/media
+		file_server
+	}
+
+	# FileBrowser application route
 	handle /filebrowser/* {
-		reverse_proxy 127.0.0.1:8081 {
-			header_up Host {host}
-		}
+		reverse_proxy 127.0.0.1:8081
 	}
 
-	# code-server: workbench.js force revalidation
-	handle /stable-*/out/vs/code/browser/workbench/workbench.js {
-		header Cache-Control "no-cache, must-revalidate"
-		reverse_proxy 127.0.0.1:8080 {
-			header_up Host {host}
-		}
-	}
-
-	# code-server catch-all
+	# KasmVNC Desktop Web & WebSocket route (root fallback)
 	handle {
-		reverse_proxy 127.0.0.1:8080 {
-			header_up Host {host}
+		reverse_proxy 127.0.0.1:8444 {
+			flush_interval -1
 		}
 	}
 }

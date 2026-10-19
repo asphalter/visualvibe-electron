@@ -1,0 +1,59 @@
+#!/bin/bash
+# ==============================================================================
+# open-browser — Launch or focus Chromium inside VisualVibe Electron desktop
+# ==============================================================================
+if [ -f "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" ]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+elif [ -f /opt/visualvibe/scripts/lib/common.sh ]; then
+    source /opt/visualvibe/scripts/lib/common.sh
+fi
+
+export DISPLAY="${DISPLAY:-:1}"
+if [ -z "$XAUTHORITY" ] && [ -f "${VV_HOME}/.Xauthority" ]; then
+    export XAUTHORITY="${VV_HOME}/.Xauthority"
+fi
+
+LOG_FILE="/tmp/open-browser.log"
+echo "$(date -Is) open-browser invoked uid=$(id -u) user=$(id -un) DISPLAY=$DISPLAY args=$*" >> "$LOG_FILE" 2>/dev/null || true
+
+TARGET_URL="${1:-chrome://newtab}"
+
+# 1. If Chromium is already open and no argument provided, raise and focus it
+if [ $# -eq 0 ] && wmctrl -l 2>/dev/null | grep -i "Chromium"; then
+    wmctrl -a "Chromium" 2>/dev/null || wmctrl -x -a "chromium-browser" 2>/dev/null || true
+    exit 0
+fi
+
+# 2. Launch Chromium with container-safe flags
+CHROMIUM_CMD=(
+    /usr/bin/chromium-browser
+    --no-sandbox
+    --test-type
+    --no-first-run
+    --no-default-browser-check
+    --disable-dev-shm-usage
+    --disable-gpu
+    --password-store=basic
+    --start-maximized
+    "$TARGET_URL"
+)
+
+echo "$(date -Is) launching chromium: ${CHROMIUM_CMD[*]}" >> "$LOG_FILE" 2>/dev/null || true
+
+if [ "$(id -u)" -eq 0 ]; then
+    runuser -u "$VV_USER" -- "${CHROMIUM_CMD[@]}" >/dev/null 2>&1 &
+else
+    "${CHROMIUM_CMD[@]}" >/dev/null 2>&1 &
+fi
+
+# 3. Ensure window is maximized once mapped by window manager
+(
+    for _i in {1..20}; do
+        if wmctrl -l 2>/dev/null | grep -i "Chromium"; then
+            sleep 0.5
+            wmctrl -r "Chromium" -b add,maximized_vert,maximized_horz 2>/dev/null || true
+            break
+        fi
+        sleep 0.3
+    done
+) &

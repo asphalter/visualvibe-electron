@@ -1,0 +1,26 @@
+#!/bin/sh
+# Openbox autostart script for VisualVibe kiosk
+
+# Wait for X display socket to be ready before applying X settings
+disp_num="${DISPLAY#:}"
+disp_num="${disp_num%%.*}"
+[ -z "$disp_num" ] && disp_num="1"
+
+elapsed=0
+while [ "$elapsed" -lt 10 ]; do
+    if [ -S "/tmp/.X11-unix/X${disp_num}" ] || [ -e "/tmp/.X11-unix/X${disp_num}" ]; then
+        break
+    fi
+    sleep 0.5
+    elapsed=$((elapsed + 1))
+done
+
+# X settings and background
+xset -dpms s off s noblank 2>/dev/null || true
+
+# Pre-select basic password store / weak encryption for VSCodium to silence keyring prompts
+export VSCODE_PASSWORD_STORE="basic"
+
+# Note: VSCodium process lifecycle and workspace launching (defaulting to
+# /home/vvelectron/VisualVibe Workdirs on first run and restoring user sessions)
+# are managed by /usr/local/bin/entrypoint.sh with watchdog auto-respawn.

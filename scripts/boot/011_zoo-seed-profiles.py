@@ -6,17 +6,15 @@ activation, it seeds its "Configuration Profiles" from the environment
 
 Why this is needed: Zoo Code (Roo fork) stores its API config as "Configuration
 Profiles" in VS Code SecretStorage (context.secrets), key "roo_cline_config_api_config".
-code-server's SecretStorage is NOT pre-seedable from state.vscdb: on a headless
-container there is no OS keyring / Electron safeStorage, so the secret store is either
-in-memory (per-session) or encrypted with a client-side key. Writing the plaintext
-JSON under "secret://..." in state.vscdb is therefore ignored by Zoo Code. The only
-robust way is to seed through Zoo Code's own context.secrets at activation time.
+In container environments SecretStorage is not reliably pre-seedable from state.vscdb:
+without a system OS keyring service, the secret store is either in-memory or encrypted
+with runtime keys. Writing the plaintext JSON under "secret://..." in state.vscdb is
+therefore ignored by Zoo Code. The only robust way is to seed through Zoo Code's own
+context.secrets at activation time.
 
 IMPORTANT — the seed OVERWRITES the profiles on every activation instead of skipping
-when a value already exists. code-server's SecretStorage can persist ciphertext tied
-to a per-browser encryption key; on a fresh browser session that ciphertext is
-undecryptable, so a "skip if present" guard would leave Zoo Code with unreadable
-profiles. Always re-writing keeps the container's config as the source of truth.
+when a value already exists. Always re-writing keeps the container's config as the
+source of truth.
 
 Idempotent: a versioned marker comment is injected alongside the seed and detected on
 re-runs. (The Zoo Code extension dir is restored fresh from /opt on every boot by
@@ -26,11 +24,15 @@ import sys, os, re
 
 sys.path.insert(0, "/opt/visualvibe/scripts/lib")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
-from vv_common import HOME, zoo_lang, latest_zoo_ext_dir
-try:
-    from patch_anchors import ZOO_ACTIVATE_ANCHOR_REGEX
-except ImportError:
-    ZOO_ACTIVATE_ANCHOR_REGEX = r"(async function [A-Za-z0-9_$]+\(([A-Za-z0-9_$]+)\)\{)([A-Za-z0-9_$]+)=\2,"
+from vv_common import VV_HOME, HOME, zoo_lang, latest_zoo_ext_dir, PatchTracker
+
+# Tested and validated with Zoo Code version 3.90.0 (the version pinned in
+# Containerfile / 002_zoo-fallback.sh).
+# When upgrading Zoo Code in Containerfile (ARG ZOO_VERSION), this constant
+# MUST be updated and all regex/replace patterns re-verified against new bundle files.
+ZOO_CODE_COMPAT_VERSION = "3.90.0"
+
+tracker = PatchTracker("011_zoo-seed-profiles", compat_version=ZOO_CODE_COMPAT_VERSION)
 
 # Versioned marker: bump when the injected snippet's shape changes.
 # v1 non-suffixed; v2 logging+always-overwrite; v3 removed welcome keys; v4 re-added
@@ -38,8 +40,12 @@ except ImportError:
 # function `pll` — see main() comment); v7 seeds Zoo Code settings (language from
 # AI_LANG, auto-approve everything except Question, preventFocusDisruption); v8 removes file logging to /tmp;
 # v9 disables auto-approval for mode switch (alwaysAllowModeSwitch=false);
-# v10 enables image support (supportsImages=true) and re-enables mode switch auto-approval (alwaysAllowModeSwitch=true).
-MARKER = "/*[VisualVibe profiles seed v10]*/"
+# v10 enables image support (supportsImages=true) and re-enables mode switch auto-approval (alwaysAllowModeSwitch=true);
+# v11 sets per-model reasoningEffort (orchestrator: high, code: medium, ask: medium, architect: high, debug: high);
+# v12 enables prompt caching (supportsPromptCache=true) on all models.
+# v13 anchors strictly to the exported activate() function (no generic fallback) so the
+# seed cannot land in the wrong async function on Zoo Code 3.90.0.
+MARKER = "/*[VisualVibe profiles seed v13]*/"
 
 # Seed snippet injected at the top of Zoo Code's activate() function. __CTX__ is
 # replaced with the activate() context parameter name found in the bundle.
@@ -50,13 +56,15 @@ SEED = (
     + '__log("seed running; AI_API_URL="+(process.env.AI_API_URL?"set":"MISSING")+", AI_API_KEY="+(process.env.AI_API_KEY?"set":"MISSING"));'
     + 'if(process.env.AI_API_URL&&process.env.AI_API_KEY){'
     + 'const __u=process.env.AI_API_URL,__k=process.env.AI_API_KEY,'
-    + '__mk=(id,m)=>({id,apiProvider:"openai",openAiBaseUrl:__u,openAiApiKey:__k,openAiModelId:m,'
-    + 'openAiCustomModelInfo:{maxTokens:null,maxThinkingTokens:null,contextWindow:1e6,supportsImages:true,supportsPromptCache:false}}),'
-    + '__cf={},__md={};'
-    + '__cf["default"]=__mk("default","visualvibe-default");'
+    + '__mk=(id,m,eff)=>({id,apiProvider:"openai",openAiBaseUrl:__u,openAiApiKey:__k,openAiModelId:m,'
+    + 'enableReasoningEffort:true,reasoningEffort:eff,'
+    + 'openAiCustomModelInfo:{maxTokens:null,maxThinkingTokens:null,contextWindow:1e6,supportsImages:true,supportsPromptCache:true,supportsReasoningEffort:true,reasoningEffort:eff}}),'
+    + '__cf={},__md={},'
+    + '__effMap={"visualvibe-orchestrator":"high","visualvibe-code":"medium","visualvibe-ask":"medium","visualvibe-architect":"high","visualvibe-debug":"high","default":"medium"};'
+    + '__cf["default"]=__mk("default","visualvibe-default",__effMap["default"]);'
     + 'for(const[m,p]of[["architect","visualvibe-architect"],["code","visualvibe-code"],'
     + '["ask","visualvibe-ask"],["debug","visualvibe-debug"],["orchestrator","visualvibe-orchestrator"]])'
-    + '{__cf[p]=__mk(p,p);__md[m]=p;}'
+    + '{__cf[p]=__mk(p,p,__effMap[p]||"medium");__md[m]=p;}'
     + 'try{await __CTX__.secrets.store(__vvk,JSON.stringify({currentApiConfigName:"default",'
     + 'apiConfigs:__cf,modeApiConfigs:__md,'
     + 'migrations:{rateLimitSecondsMigrated:true,openAiHeadersMigrated:true,'
@@ -67,6 +75,8 @@ SEED = (
     + 'try{await __CTX__.secrets.store("openAiApiKey",__k);'
     + 'await __CTX__.globalState.update("apiProvider","openai");'
     + 'await __CTX__.globalState.update("openAiBaseUrl",__u);'
+    + 'await __CTX__.globalState.update("enableReasoningEffort",true);'
+    + 'await __CTX__.globalState.update("reasoningEffort","medium");'
     + '__log("welcome keys stored OK");}'
     + 'catch(__e2){__log("welcome keys FAILED: "+(__e2&&__e2.message?__e2.message:__e2));}'
     + '}else{__log("env vars missing; skip seed");}'
@@ -112,31 +122,67 @@ def main():
         return
 
     # Strip any older seed version so upgrades/re-runs cleanly replace the injection.
-    s = re.sub(r'/\*\[VisualVibe profiles seed [^\]]+\]\*/.*?(catch\(__e0\)\{[^}]+\})', '', s)
+    s = tracker.tracked_sub(
+        r'/\*\[VisualVibe profiles seed [^\]]+\]\*/.*?(catch\(__e0\)\{[^}]+\})',
+        '',
+        s,
+        name="strip-legacy-seed",
+        critical=False,
+        log_level="DEBUG",
+    )
 
     # Activate() signature:
     # - Zoo Code 3.86.0: async function gll(t){oxi=t, ...  (context stored globally as `oxi`)
     # - Zoo Code 3.88.0: async function lgl(t){F_i=t, ...  (context stored globally as `F_i`)
-    # First attempt: resolve activate via the bundle export `activate:()=>NAME`
-    m = None
+    # - Zoo Code 3.90.0: the export `activate:()=>NAME` still resolves the real entry
+    #   point, but the function body may differ, so anchor on the exported name only.
+    # Resolve the real activate() from the bundle export and inject the seed immediately
+    # after its opening brace. Deliberately do NOT fall back to a generic "any async
+    # function" pattern: a wrong match (e.g. the mode-switch handler) makes the seed run
+    # only after a mode change, reproducing the "default profile keeps gpt-o4 on first
+    # open" symptom.
+    act_pattern = None
+    act_fn = None
     m_exp = re.search(r"activate:\(\)=>([A-Za-z0-9_$]+)", s)
     if m_exp:
         act_fn = m_exp.group(1)
-        m = re.search(rf"(async function {re.escape(act_fn)}\(([A-Za-z0-9_$]+)\)\{{)([A-Za-z0-9_$]+)=\2,", s)
+        act_pattern = rf"(async function {re.escape(act_fn)}\(([A-Za-z0-9_$]+)\)\{{)"
+        if not re.search(act_pattern, s):
+            print(f"[Init] WARN: exported activate() {act_fn!r} declaration not found; refusing generic fallback injection.")
+            act_pattern = None
 
-    # Fallback to centralized ZOO_ACTIVATE_ANCHOR_REGEX
-    if not m:
-        m = re.search(ZOO_ACTIVATE_ANCHOR_REGEX, s)
-
-    if not m:
+    if not act_pattern:
         print("[Init] ERROR: Zoo Code activate() anchor not found; profiles seed NOT applied.")
+        tracker.report()
+        if tracker.has_critical_failures():
+            sys.stderr.write("[Init] CRITICAL: Zoo Code extension.js patching failed! Container startup will continue, but AI profiles may not be seeded.\n")
         return
-    ctx = m.group(2)
-    glob_var = m.group(3)
 
-    seed = SEED.replace("__CTX__", ctx)
-    # Inject right after the opening brace of activate().
-    s = s[: m.end(1)] + seed + s[m.end(1):]
+    ctx_ref = [None]
+
+    def _inject_seed(match):
+        opening = match.group(1)
+        ctx = match.group(2)
+        ctx_ref[0] = ctx
+        seed = SEED.replace("__CTX__", ctx)
+        rest = match.group(0)[len(opening):]
+        return opening + seed + rest
+
+    s = tracker.tracked_sub(
+        act_pattern,
+        _inject_seed,
+        s,
+        name="inject-activate-seed",
+        critical=True,
+        count=1,
+    )
+
+    if ctx_ref[0] is None:
+        print("[Init] ERROR: Zoo Code activate() anchor not found; profiles seed NOT applied.")
+        tracker.report()
+        if tracker.has_critical_failures():
+            sys.stderr.write("[Init] CRITICAL: Zoo Code extension.js patching failed! Container startup will continue, but AI profiles may not be seeded.\n")
+        return
 
     with open(ext_js, "w", encoding="utf-8") as f:
         f.write(s)
@@ -144,10 +190,22 @@ def main():
     # Verify the injection actually landed (fail-loud if not).
     with open(ext_js, "r", encoding="utf-8", errors="replace") as f:
         check = f.read()
-    if MARKER in check and (f"{glob_var}={ctx},") in check:
+    ctx = ctx_ref[0]
+    verification_ok = False
+    if MARKER in check and act_fn and ctx:
+        # The seed must sit immediately after the real activate() opening brace.
+        verification_ok = re.search(
+            rf"async function {re.escape(act_fn)}\({re.escape(ctx)}\)\{{{re.escape(MARKER)}",
+            check,
+        ) is not None
+    if verification_ok:
         print("[Init] Zoo Code profiles seed injected into extension.js (activate).")
     else:
         print("[Init] ERROR: profiles seed injection verification FAILED (marker/activate anchor missing).")
+
+    tracker.report()
+    if tracker.has_critical_failures():
+        sys.stderr.write("[Init] CRITICAL: Zoo Code extension.js patching had critical failures! Container startup will continue.\n")
 
 
 if __name__ == "__main__":

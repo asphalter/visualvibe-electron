@@ -9,8 +9,14 @@ print_visualvibe_banner() {
     local CL=$'\033[1;37m'
     local CG=$'\033[1;32m'
 
+    if [ -f "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh" ]; then
+        source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+    elif [ -f /opt/visualvibe/scripts/lib/common.sh ]; then
+        source /opt/visualvibe/scripts/lib/common.sh
+    fi
+
     local VV_VERSION=""
-    for vpath in "/opt/visualvibe/VERSION" "$(dirname "${BASH_SOURCE[0]}")/../VERSION"; do
+    for vpath in "${VV_BASE:-/opt/visualvibe}/VERSION" "$(dirname "${BASH_SOURCE[0]}")/../VERSION"; do
         if [ -f "$vpath" ]; then
             VV_VERSION="$(cat "$vpath" 2>/dev/null | tr -d '[:space:]')"
             [ -n "$VV_VERSION" ] && break

@@ -6,14 +6,15 @@ into every discovered project that does not already have them (idempotent).
 """
 import sys, os
 sys.path.insert(0, "/opt/visualvibe/scripts/lib")
-from vv_common import HOME, discover_projects
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
+from vv_common import VV_HOME, VV_WORKDIRS, discover_projects
 
 # ── 1. Global Zoo Code Rules (~/.roo/rules/visualvibe.md) ────────────────────
 # Zoo Code loads global rules from ~/.roo/rules/*.md across all workspaces.
 # Keeping VisualVibe directives here ensures they appear in the UI under "Global Rules"
 # and prevents duplication across individual projects.
 try:
-    global_rules_dir = os.path.join(HOME, ".roo", "rules")
+    global_rules_dir = os.path.join(VV_HOME, ".roo", "rules")
     os.makedirs(global_rules_dir, exist_ok=True)
     global_rules_file = os.path.join(global_rules_dir, "visualvibe.md")
 
@@ -72,7 +73,7 @@ except Exception as e:
     print(f"[Init] Warning: Could not seed global Zoo Code rules: {e}")
 
 # ── 2. Workspace Pre-seeding (memory-bank/ per project) ───────────────────────
-_workdirs_path = os.path.join(HOME, "VisualVibe Workdirs")
+_workdirs_path = VV_WORKDIRS
 
 for prj_name, prj_dir in discover_projects(_workdirs_path):
     try:

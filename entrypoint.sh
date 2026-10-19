@@ -29,13 +29,20 @@ if [ ${#missing_vars[@]} -gt 0 ]; then
     exit 1
 fi
 
+# Source centralized helpers and paths
+if [ -f "$(dirname "${BASH_SOURCE[0]}")/scripts/lib/common.sh" ]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/scripts/lib/common.sh"
+elif [ -f /opt/visualvibe/scripts/lib/common.sh ]; then
+    source /opt/visualvibe/scripts/lib/common.sh
+fi
+
 # Print official VisualVibe Electron neon banner on container startup
-if [ -f /opt/visualvibe/scripts/print_banner.sh ]; then
-    bash /opt/visualvibe/scripts/print_banner.sh
+if [ -f "${VV_SCRIPTS}/print_banner.sh" ]; then
+    bash "${VV_SCRIPTS}/print_banner.sh"
 fi
 
 echo "=========================================================="
-echo "    Initializing VisualVibe Electron (code-server IDE)"
+echo "    Initializing VisualVibe Electron (VSCodium + KasmVNC)"
 echo "=========================================================="
 
 # 1. Ensure permissions on /dev/fuse for nested Podman
@@ -44,70 +51,88 @@ if [ -e /dev/fuse ]; then
 fi
 
 # 2. Setup home directory and ownership for vvelectron user
-mkdir -p /home/vvelectron
-# Only fix ownership on the home dir itself — NOT recursively.
-# Recursive chown would walk the entire persistent volume on every boot.
-chown vvelectron:vvelectron /home/vvelectron
-mkdir -p /home/vvelectron/.local/share
-chown -R vvelectron:vvelectron /home/vvelectron/.local 2>/dev/null || true
+mkdir -p "$VV_HOME" "$VV_WORKDIRS"
+chown "${VV_USER}:${VV_USER}" "$VV_HOME" "$VV_WORKDIRS"
 
-# Ensure the cache dir is owned by vvelectron (avoid EACCES on .cache/Microsoft etc.)
-if [ -e /home/vvelectron/.cache ]; then
-    chown vvelectron:vvelectron /home/vvelectron/.cache 2>/dev/null || true
+# Ensure XDG and runtime directories exist
+export XDG_RUNTIME_DIR="/tmp/runtime-${VV_USER}"
+mkdir -p "$XDG_RUNTIME_DIR" "${VV_HOME}/.config" "${VV_HOME}/.cache" "$VSCODIUM_DATA"
+chmod 700 "$XDG_RUNTIME_DIR"
+chown -R "${VV_USER}:${VV_USER}" "$XDG_RUNTIME_DIR" "${VV_HOME}/.config" "${VV_HOME}/.cache" "$VSCODIUM_DATA"
+
+# 3. Setup persistent Podman storage
+PODMAN_STORAGE="${VV_HOME}/.local/share/containers/storage"
+mkdir -p "$PODMAN_STORAGE"
+chown -R "${VV_USER}:${VV_USER}" "${VV_HOME}/.local" 2>/dev/null || true
+
+# 4. Generate persistent self-signed TLS certificates for Caddy
+CERTS_DIR="${VV_HOME}/.config/caddy/certs"
+mkdir -p "$CERTS_DIR"
+if [ ! -f "$CERTS_DIR/cert.pem" ] || [ ! -f "$CERTS_DIR/key.pem" ]; then
+    vv_log INFO "Generating self-signed TLS certificate with IP SANs..."
+    CONTAINER_IPS=$(hostname -I 2>/dev/null || true)
+    SAN_ENTRIES="IP:127.0.0.1,DNS:localhost"
+    for ip in $CONTAINER_IPS; do
+        SAN_ENTRIES="$SAN_ENTRIES,IP:$ip"
+    done
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout "$CERTS_DIR/key.pem" \
+        -out "$CERTS_DIR/cert.pem" \
+        -subj "/CN=VisualVibe-Electron" \
+        -addext "subjectAltName=$SAN_ENTRIES" >/dev/null 2>&1 || {
+            openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+                -keyout "$CERTS_DIR/key.pem" \
+                -out "$CERTS_DIR/cert.pem" \
+                -subj "/CN=VisualVibe-Electron" >/dev/null 2>&1
+        }
+    chmod 600 "$CERTS_DIR/key.pem" "$CERTS_DIR/cert.pem"
+    chown -R "${VV_USER}:${VV_USER}" "${VV_HOME}/.config/caddy"
 fi
 
-# 3. Configure Podman storage for persistent volume
-if [ ! -f /home/vvelectron/.config/containers/storage.conf ]; then
-    echo "[Init] Configuring Podman storage (fuse-overlayfs)..."
-    mkdir -p /home/vvelectron/.config/containers
-    cp /opt/visualvibe/config/containers-storage.conf /home/vvelectron/.config/containers/storage.conf
-    chown -R vvelectron:vvelectron /home/vvelectron/.config
+# 5. Execute modular boot scripts (error-resilient for container PID 1 stability)
+BOOT_DIR="$VV_BOOT_DIR"
+if [ -d "$BOOT_DIR" ]; then
+    vv_log INFO "Executing boot scripts from $BOOT_DIR..."
+    for script in $(ls "$BOOT_DIR" | sort); do
+        script_path="$BOOT_DIR/$script"
+        if [ -f "$script_path" ]; then
+            case "$script" in
+                *.sh)
+                    vv_log INFO "Running boot shell script: $script"
+                    if ! bash "$script_path"; then
+                        vv_log WARN "Boot shell script $script exited with code $? (continuing)"
+                    fi
+                    ;;
+                *.py)
+                    vv_log INFO "Running boot Python script: $script"
+                    if ! python3 "$script_path"; then
+                        vv_log WARN "Boot Python script $script exited with code $? (continuing)"
+                    fi
+                    ;;
+            esac
+        fi
+    done
 fi
 
-# Ensure default workspace directory exists in the volume
-workdirs="/home/vvelectron/VisualVibe Workdirs"
-if [ ! -d "$workdirs" ]; then
-    echo "[Init] Creating workspace directory: $workdirs"
-    mkdir -p "$workdirs"
-fi
-# Only fix ownership on the workdir itself — NOT recursively.
-chown vvelectron:vvelectron "$workdirs"
-
-# ── Phase 1: apply boot-time patches & configuration (numeric order) ─────────
-BOOT_DIR="/opt/visualvibe/scripts/boot"
-for script in "$BOOT_DIR"/[0-9][0-9][0-9]_*; do
-    [ -f "$script" ] || continue
-    # 010_* runs after FileBrowser starts (see service phase below)
-    case "$(basename "$script")" in
-        010_*) continue ;;
-    esac
-    echo "── [boot] $(basename "$script")"
-    case "$script" in
-        *.sh) bash "$script" || echo "[boot] WARN: $(basename "$script") failed (continuing)" ;;
-        *.py) python3 "$script" || echo "[boot] WARN: $(basename "$script") failed (continuing)" ;;
-    esac
-done
-
-# 7. Ensure persistent directories for FileBrowser (db and cache survive restarts)
-mkdir -p /home/vvelectron/.local/share/filebrowser
-mkdir -p /home/vvelectron/.cache/filebrowser
-chown -R vvelectron:vvelectron \
-    /home/vvelectron/.local/share/filebrowser \
-    /home/vvelectron/.cache/filebrowser
-
-# Helper: active HTTP polling with fail-fast timeout and process liveliness check
+# 6. Readiness check helper function
 wait_for_http() {
     local url="$1"
     local label="$2"
     local timeout="${3:-30}"
     local logfile="$4"
     local pid="${5:-}"
+    local allow_auth="${6:-false}"
     local elapsed=0
 
     echo "[$label] Waiting for service readiness at $url (timeout: ${timeout}s)..."
     while [ "$elapsed" -lt "$timeout" ]; do
-        if curl -k -fsSo /dev/null "$url" 2>/dev/null; then
-            echo "[$label] Service is ready and responding."
+        local status_code
+        status_code=$(curl -k -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+        if [ "$status_code" -ge 200 ] && [ "$status_code" -lt 400 ]; then
+            echo "[$label] Service is ready and responding (HTTP $status_code)."
+            return 0
+        elif [ "$allow_auth" = "true" ] && { [ "$status_code" = "401" ] || [ "$status_code" = "502" ]; }; then
+            echo "[$label] Service is ready and responding (HTTP $status_code)."
             return 0
         fi
         if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
@@ -128,152 +153,198 @@ wait_for_http() {
     exit 1
 }
 
-# 8. Start FileBrowser Quantum (127.0.0.1:8081, served via Caddy at /filebrowser/)
-echo "[FileBrowser] Starting FileBrowser Quantum on 127.0.0.1:8081..."
-runuser -u vvelectron -- filebrowser -c /opt/visualvibe/config/filebrowser.yaml > /tmp/filebrowser.log 2>&1 &
+# 7. Start D-Bus session bus
+echo "[D-Bus] Starting D-Bus session bus..."
+mkdir -p /run/user/1000 /tmp/dbus
+chown -R "${VV_USER}:${VV_USER}" /run/user/1000 /tmp/dbus 2>/dev/null || true
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/tmp/dbus/session.sock"
+rm -f /tmp/dbus/session.sock
+runuser -u "$VV_USER" -- dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork --nopidfile || true
+
+# 8. Setup KasmVNC authentication & configuration
+DISPLAY_NUM=":1"
+export DISPLAY="$DISPLAY_NUM"
+KASM_USER_PASS="visualvibe"
+echo "[KasmVNC] Configuring KasmVNC authentication for user ${VV_USER}..."
+mkdir -p "${VV_HOME}/.vnc" /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
+cp -f "${VV_CONFIG}/kasmvnc.yaml" "${VV_HOME}/.vnc/kasmvnc.yaml" 2>/dev/null || true
+cp -f "${VV_CONFIG}/kasmvnc.yaml" /etc/kasmvnc/kasmvnc.yaml 2>/dev/null || true
+
+# Configure user in .kasmpasswd atomically
+printf "%s\n%s\n" "$KASM_USER_PASS" "$KASM_USER_PASS" | runuser -u "$VV_USER" -- kasmvncpasswd -u "$VV_USER" -w
+chown -R "${VV_USER}:${VV_USER}" "${VV_HOME}/.vnc" "${VV_HOME}/.kasmpasswd"
+
+# Clean any stale lockfiles or sockets for DISPLAY_NUM
+rm -f "/tmp/.X11-unix/X${DISPLAY_NUM#:}" "/tmp/.X${DISPLAY_NUM#:}-lock"
+
+# 9. Start KasmVNC Server (which launches Xvnc on DISPLAY_NUM with built-in WebSocket & web UI)
+echo "[KasmVNC] Starting KasmVNC server on display $DISPLAY_NUM (port 8444)..."
+if command -v kasmvncserver >/dev/null 2>&1; then
+    DISPLAY="$DISPLAY_NUM" runuser -u "$VV_USER" -- \
+        kasmvncserver "$DISPLAY_NUM" \
+        -desktop "VisualVibe Electron" \
+        -websocketPort 8444 \
+        -interface 127.0.0.1 \
+        -noxstartup \
+        -DisableBasicAuth \
+        -SecurityTypes None \
+        > /tmp/kasmvnc.log 2>&1 &
+elif command -v vncserver >/dev/null 2>&1; then
+    DISPLAY="$DISPLAY_NUM" runuser -u "$VV_USER" -- \
+        vncserver "$DISPLAY_NUM" \
+        -desktop "VisualVibe Electron" \
+        -websocketPort 8444 \
+        -interface 127.0.0.1 \
+        -noxstartup \
+        -DisableBasicAuth \
+        -SecurityTypes None \
+        > /tmp/kasmvnc.log 2>&1 &
+else
+    echo "[KasmVNC] WARN: kasmvncserver binary not found, checking fallback paths..."
+fi
+
+# Wait for X11 socket created by Xvnc to appear and verify readiness
+vv_wait_for_display "$DISPLAY_NUM" 30 "KasmVNC display ($DISPLAY_NUM)" || true
+vv_wait_for_port 8444 30 "KasmVNC WebSocket (port 8444)" || true
+
+# Find Xvnc daemon PID written by vncserver into ~/.vnc/<host>:<display>.pid
+VNC_PID=""
+for pidfile in "${VV_HOME}/.vnc/"*"${DISPLAY_NUM}".pid; do
+    if [ -f "$pidfile" ]; then
+        VNC_PID="$(cat "$pidfile" 2>/dev/null | tr -d '[:space:]')"
+        [ -n "$VNC_PID" ] && break
+    fi
+done
+if [ -z "$VNC_PID" ]; then
+    VNC_PID="$(pgrep -u "$VV_USER" -x Xvnc 2>/dev/null || true)"
+fi
+echo "[KasmVNC] Xvnc daemon running with PID $VNC_PID."
+
+wait_for_http "http://127.0.0.1:8444" "KasmVNC" 30 "/tmp/kasmvnc.log" "$VNC_PID" "false"
+
+# 10. Start Openbox Window Manager in kiosk mode
+echo "[Openbox] Starting Openbox kiosk window manager..."
+OPENBOX_CONFIG="${VV_CONFIG}/openbox/rc.xml"
+DISPLAY="$DISPLAY_NUM" runuser -u "$VV_USER" -- openbox --config-file "$OPENBOX_CONFIG" > /tmp/openbox.log 2>&1 &
+OPENBOX_PID=$!
+vv_wait_for_process "openbox" 30 "Openbox window manager" || true
+
+# 11. Start VSCodium as native desktop GUI on X11
+echo "[VSCodium] Starting VSCodium IDE on display $DISPLAY_NUM..."
+WORKDIRS_PATH="$VV_WORKDIRS"
+INITIAL_MARKER="${VSCODIUM_CONFIG}/.initial_workspace_done"
+
+# Verify X display and window manager are active before starting VSCodium
+vv_wait_for_display "$DISPLAY_NUM" 30 "KasmVNC X display for VSCodium" || true
+vv_wait_for_process "openbox" 30 "Openbox for VSCodium" || true
+
+if [ ! -f "$INITIAL_MARKER" ]; then
+    echo "[VSCodium] Initial launch detected: opening default explorer in $WORKDIRS_PATH"
+    DISPLAY="$DISPLAY_NUM" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+        runuser -u "$VV_USER" -- \
+        /usr/share/codium/codium --no-sandbox --password-store=basic "$WORKDIRS_PATH" > /tmp/codium.log 2>&1 &
+    CODIUM_PID=$!
+    mkdir -p "$(dirname "$INITIAL_MARKER")"
+    touch "$INITIAL_MARKER"
+    chown "${VV_USER}:${VV_USER}" "$INITIAL_MARKER" 2>/dev/null || true
+else
+    echo "[VSCodium] Existing session detected: restoring last active workspace..."
+    DISPLAY="$DISPLAY_NUM" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+        runuser -u "$VV_USER" -- \
+        /usr/share/codium/codium --no-sandbox --password-store=basic > /tmp/codium.log 2>&1 &
+    CODIUM_PID=$!
+fi
+echo "[VSCodium] Started with PID $CODIUM_PID."
+vv_wait_for_process "codium" 30 "VSCodium main process" || true
+
+# 12. Start FileBrowser Quantum (served via Caddy at /filebrowser/)
+echo "[FileBrowser] Starting FileBrowser Quantum..."
+mkdir -p "${VV_HOME}/.local/share/filebrowser" "${VV_HOME}/.cache/filebrowser" "$VV_WORKDIRS"
+chown -R "${VV_USER}:${VV_USER}" "${VV_HOME}/.local" "${VV_HOME}/.cache" "$VV_WORKDIRS" 2>/dev/null || true
+runuser -u "$VV_USER" -- filebrowser -c "${VV_CONFIG}/filebrowser.yaml" > /tmp/filebrowser.log 2>&1 &
 FB_PID=$!
+vv_wait_for_port 8081 30 "FileBrowser backend" || true
 wait_for_http "http://127.0.0.1:8081/filebrowser/" "FileBrowser" 30 "/tmp/filebrowser.log" "$FB_PID"
 
-# 8b. Apply VisualVibe branding to FileBrowser (post-start: it regenerates its icons)
-bash "$BOOT_DIR/010_filebrowser-branding.sh" || echo "[boot] WARN: 010_filebrowser-branding.sh failed (continuing)"
-
-# 9. Start code-server (127.0.0.1:8080, served via Caddy at /)
-echo "[code-server] Starting code-server on 127.0.0.1:8080..."
-# Ensure cache dirs are owned by vvelectron before code-server/extension host start
-if [ -e /home/vvelectron/.cache ]; then
-    chown -R vvelectron:vvelectron /home/vvelectron/.cache 2>/dev/null || true
-fi
-# Auth mode: if PASSWORD is set and non-empty use password auth, otherwise open (no auth).
-if [ -n "${PASSWORD:-}" ]; then
-    CS_AUTH="password"
-    CS_AUTH_LABEL="Password (set via PASSWORD env var)"
-else
-    CS_AUTH="none"
-    CS_AUTH_LABEL="None (open — secure at perimeter via Cloudflare Access / VPN)"
-fi
-
-VV_APP_NAME="VisualVibe Electron"
-
-runuser -u vvelectron -- \
-    env PASSWORD="${PASSWORD:-}" \
-    code-server \
-        --bind-addr 127.0.0.1:8080 \
-        --auth "${CS_AUTH}" \
-        --disable-telemetry \
-        --app-name "${VV_APP_NAME}" \
-    > /tmp/code-server.log 2>&1 &
-CS_PID=$!
-wait_for_http "http://127.0.0.1:8080/healthz" "code-server" 30 "/tmp/code-server.log" "$CS_PID"
-
-# 10. Configure TLS certificate for HTTPS (:443)
-# If both CERTFILE_PUBLIC and CERTFILE_PRIVATE are provided, deploy the custom certificate and key.
-# Otherwise, fall back to maintaining a persistent self-signed certificate with IP SANs.
-CERTS_DIR="/home/vvelectron/.config/caddy/certs"
-CERT_FILE="${CERTS_DIR}/cert.pem"
-KEY_FILE="${CERTS_DIR}/key.pem"
-CUSTOM_MARKER="${CERTS_DIR}/.is_custom"
-
-deploy_cert_material() {
-    local val="$1"
-    local dest="$2"
-
-    if [ -f "${val}" ]; then
-        cp -f "${val}" "${dest}"
-    elif printf "%s" "${val}" | grep -q -- "-----BEGIN"; then
-        printf "%s\n" "${val}" > "${dest}"
-    elif printf "%s" "${val}" | tr -d '\r\n ' | base64 -d 2>/dev/null | grep -q -- "-----BEGIN"; then
-        printf "%s" "${val}" | tr -d '\r\n ' | base64 -d > "${dest}"
-    else
-        # Fallback: attempt base64 decode if valid, otherwise write raw string
-        if ! printf "%s" "${val}" | tr -d '\r\n ' | base64 -d > "${dest}" 2>/dev/null || [ ! -s "${dest}" ]; then
-            printf "%s\n" "${val}" > "${dest}"
-        fi
-    fi
-    sed -i -e '$a\' "${dest}" 2>/dev/null || true
-}
-
-mkdir -p "${CERTS_DIR}"
-
-if [ -n "${CERTFILE_PUBLIC:-}" ] && [ -n "${CERTFILE_PRIVATE:-}" ]; then
-    deploy_cert_material "${CERTFILE_PUBLIC}" "${CERT_FILE}"
-    deploy_cert_material "${CERTFILE_PRIVATE}" "${KEY_FILE}"
-    chmod 600 "${KEY_FILE}"
-    chmod 644 "${CERT_FILE}"
-    chown -R vvelectron:vvelectron "${CERTS_DIR}"
-    touch "${CUSTOM_MARKER}"
-    echo "[Caddy TLS] Custom TLS certificate and private key deployed successfully from CERTFILE_PUBLIC / CERTFILE_PRIVATE."
-else
-    if [ -n "${CERTFILE_PUBLIC:-}" ] || [ -n "${CERTFILE_PRIVATE:-}" ]; then
-        echo "[Caddy TLS] Notice: Only one of CERTFILE_PUBLIC / CERTFILE_PRIVATE was set. Both are required for custom TLS. Falling back to self-signed certificate."
-    fi
-
-    if [ -f "${CUSTOM_MARKER}" ] || [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
-        rm -f "${CUSTOM_MARKER}" 2>/dev/null || true
-        echo "[Caddy] Generating persistent self-signed TLS certificate with IP SANs..."
-
-        # Build SAN string including loopback, local hostname, and all detected network IPs
-        SAN_ENTRIES="DNS:localhost,IP:127.0.0.1"
-        for ip in $(hostname -I 2>/dev/null); do
-            SAN_ENTRIES="${SAN_ENTRIES},IP:${ip}"
-        done
-
-        openssl req -x509 -newkey rsa:2048 -nodes \
-            -keyout "${KEY_FILE}" \
-            -out "${CERT_FILE}" \
-            -days 3650 \
-            -subj "/CN=VisualVibe Electron" \
-            -addext "subjectAltName=${SAN_ENTRIES}" >/dev/null 2>&1
-
-        chmod 600 "${KEY_FILE}"
-        chmod 644 "${CERT_FILE}"
-        chown -R vvelectron:vvelectron "/home/vvelectron/.config/caddy"
-        echo "[Caddy] TLS certificate generated successfully (SAN: ${SAN_ENTRIES})."
-    else
-        echo "[Caddy] Reusing existing persistent TLS certificate at ${CERT_FILE}"
+# Apply FileBrowser branding post-start
+if [ -f "$BOOT_DIR/010_filebrowser-branding.sh" ]; then
+    if ! bash "$BOOT_DIR/010_filebrowser-branding.sh"; then
+        vv_log WARN "010_filebrowser-branding.sh failed, continuing..."
     fi
 fi
 
-# 11. Start Caddy reverse proxy (:80 redirect -> :443 HTTPS with persistent TLS cert)
-echo "[Caddy] Starting Caddy reverse proxy (:80 -> :443 HTTPS)..."
-caddy run --config /opt/visualvibe/config/Caddyfile --adapter caddyfile > /tmp/caddy.log 2>&1 &
+# 13. Start Caddy reverse proxy
+# Ensure backend services are reachable before starting reverse proxy
+vv_wait_for_port 8444 30 "KasmVNC backend for Caddy" || true
+vv_wait_for_port 8081 30 "FileBrowser backend for Caddy" || true
+
+echo "[Caddy] Starting Caddy reverse proxy..."
+caddy run --config "${VV_CONFIG}/Caddyfile" --adapter caddyfile > /tmp/caddy.log 2>&1 &
 CADDY_PID=$!
-wait_for_http "http://127.0.0.1:80/" "Caddy (:80 redirect)" 15 "/tmp/caddy.log" "$CADDY_PID"
+vv_wait_for_port 443 30 "Caddy HTTPS port 443" || true
+wait_for_http "https://127.0.0.1:443" "Caddy" 30 "/tmp/caddy.log" "$CADDY_PID" "false"
 
+# 14. Report status & active ports
 echo "=========================================================="
-echo " VisualVibe Electron is ACTIVE and ready!"
-echo " Web IDE:       https://<host>/ (o http://<host>:8000/ via reverse proxy)"
-echo " File Manager:  https://<host>/filebrowser/"
-echo " Auth:          ${CS_AUTH_LABEL}"
+echo "    VisualVibe Electron initialized successfully!"
+echo "=========================================================="
+echo " Active Services:"
+echo "   - VisualVibe HTTPS      : https://0.0.0.0:443"
+echo "   - VisualVibe HTTP Proxy : http://0.0.0.0:8000"
+echo " AI Configuration:"
+echo "   - AI_LANG        : ${AI_LANG}"
+echo "   - AI_API_URL     : ${AI_API_URL}"
 echo "=========================================================="
 
-# Graceful shutdown cleanup trap
+# 15. Graceful shutdown handler
 cleanup() {
-    echo "[Shutdown] Terminating services..."
-    if [ -n "${CADDY_PID:-}" ]; then
-        kill -TERM "$CADDY_PID" 2>/dev/null || true
-    fi
-    pkill -u vvelectron filebrowser 2>/dev/null || true
-    # Gracefully stop code-server and WAIT for it to exit, so VS Code flushes
-    # state.vscdb (globalState) and the extension host (Zoo Code task history)
-    # runs deactivate() before the container is torn down. This avoids losing
-    # the last in-flight writes that an immediate SIGKILL would drop.
-    pkill -TERM -u vvelectron -f "code-server" 2>/dev/null || true
-    for _ in $(seq 1 15); do
-        pgrep -u vvelectron -f "code-server" >/dev/null 2>&1 || break
-        sleep 1
-    done
-    pkill -KILL -u vvelectron -f "code-server" 2>/dev/null || true
+    echo ""
+    echo "[Shutdown] Caught signal — terminating all VisualVibe services..."
+    kill -TERM "$CADDY_PID" "$FB_PID" "$CODIUM_PID" "$VNC_PID" "$OPENBOX_PID" 2>/dev/null || true
+    wait "$CADDY_PID" "$FB_PID" 2>/dev/null || true
+    echo "[Shutdown] All services stopped cleanly."
     exit 0
 }
 
-trap cleanup SIGTERM SIGINT SIGQUIT
+trap cleanup SIGTERM SIGINT SIGHUP
 
-# Keep container running while code-server and Caddy are active.
-# Use 'sleep N & wait $!' so SIGTERM is delivered immediately to Bash.
-while kill -0 "$CADDY_PID" 2>/dev/null && pgrep -u vvelectron -f "code-server" > /dev/null 2>&1; do
-    sleep 2 &
-    wait $!
+# 16. Monitor loop: keep container running and supervise core services
+# Disable set -e so supervision checks, signals, or process restarts never abort PID 1
+set +e
+
+while true; do
+    if ! kill -0 "$CADDY_PID" 2>/dev/null; then
+        vv_log ERROR "Caddy died unexpectedly! Log output:"
+        cat /tmp/caddy.log >&2
+        cleanup
+    fi
+    if ! kill -0 "$FB_PID" 2>/dev/null; then
+        vv_log ERROR "FileBrowser died unexpectedly! Log output:"
+        cat /tmp/filebrowser.log >&2
+        cleanup
+    fi
+    if [ -n "$VNC_PID" ] && ! kill -0 "$VNC_PID" 2>/dev/null; then
+        vv_log ERROR "KasmVNC died unexpectedly! Log output:"
+        cat /tmp/kasmvnc.log >&2
+        cleanup
+    fi
+    if [ -n "$OPENBOX_PID" ] && ! kill -0 "$OPENBOX_PID" 2>/dev/null; then
+        vv_log ERROR "Openbox died unexpectedly! Log output:"
+        cat /tmp/openbox.log >&2
+        cleanup
+    fi
+
+    # Respawn VSCodium if it ever exits while X11/KasmVNC are running
+    if ! kill -0 "$CODIUM_PID" 2>/dev/null && ! pgrep -u "${VV_USER}" -f "codium" >/dev/null 2>&1; then
+        vv_log WARN "VSCodium process exited, restarting on display $DISPLAY_NUM..."
+        vv_wait_for_display "$DISPLAY_NUM" 10 "KasmVNC display for VSCodium respawn" || true
+        DISPLAY="$DISPLAY_NUM" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+            runuser -u "${VV_USER}" -- \
+            /usr/share/codium/codium --no-sandbox --password-store=basic > /tmp/codium.log 2>&1 &
+        CODIUM_PID=$!
+        vv_wait_for_process "codium" 15 "VSCodium respawned process" || true
+    fi
+
+    sleep 2
 done
-
-echo "[Shutdown] Primary service exited, running cleanup..."
-cleanup
