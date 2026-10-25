@@ -12,9 +12,10 @@ with runtime keys. Writing the plaintext JSON under "secret://..." in state.vscd
 therefore ignored by Zoo Code. The only robust way is to seed through Zoo Code's own
 context.secrets at activation time.
 
-IMPORTANT — the seed OVERWRITES the profiles on every activation instead of skipping
-when a value already exists. Always re-writing keeps the container's config as the
-source of truth.
+IMPORTANT — the seed performs a non-destructive merge: it preserves all pre-existing
+user-defined profiles, selectively enforces/upserts the visualvibe-* system profiles
+and 'default', preserves the active profile if valid, preserves custom mode mappings
+while updating standard modes, and conditionally seeds globalState settings only when undefined.
 
 Idempotent: a versioned marker comment is injected alongside the seed and detected on
 re-runs. (The Zoo Code extension dir is restored fresh from /opt on every boot by
@@ -26,11 +27,11 @@ sys.path.insert(0, "/opt/visualvibe/scripts/lib")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from vv_common import VV_HOME, HOME, zoo_lang, latest_zoo_ext_dir, PatchTracker
 
-# Tested and validated with Zoo Code version 3.90.0 (the version pinned in
+# Tested and validated with Zoo Code version 3.92.0 (the version pinned in
 # Containerfile / 002_zoo-fallback.sh).
 # When upgrading Zoo Code in Containerfile (ARG ZOO_VERSION), this constant
 # MUST be updated and all regex/replace patterns re-verified against new bundle files.
-ZOO_CODE_COMPAT_VERSION = "3.90.0"
+ZOO_CODE_COMPAT_VERSION = "3.92.0"
 
 tracker = PatchTracker("011_zoo-seed-profiles", compat_version=ZOO_CODE_COMPAT_VERSION)
 
@@ -43,9 +44,10 @@ tracker = PatchTracker("011_zoo-seed-profiles", compat_version=ZOO_CODE_COMPAT_V
 # v10 enables image support (supportsImages=true) and re-enables mode switch auto-approval (alwaysAllowModeSwitch=true);
 # v11 sets per-model reasoningEffort (orchestrator: high, code: medium, ask: medium, architect: high, debug: high);
 # v12 enables prompt caching (supportsPromptCache=true) on all models.
-# v13 anchors strictly to the exported activate() function (no generic fallback) so the
-# seed cannot land in the wrong async function on Zoo Code 3.90.0.
-MARKER = "/*[VisualVibe profiles seed v13]*/"
+# v13 anchors strictly to the exported activate() function (no generic fallback) on Zoo Code 3.90.0.
+# v14 adds toolRepetitionLimitsMigrated:true in migrations and verified on Zoo Code 3.92.0.
+# v15 non-destructive merge of user profiles, selective visualvibe-* enforcing, conditional globalState pre-seeding.
+MARKER = "/*[VisualVibe profiles seed v15]*/"
 
 # Seed snippet injected at the top of Zoo Code's activate() function. __CTX__ is
 # replaced with the activate() context parameter name found in the bundle.
@@ -59,45 +61,60 @@ SEED = (
     + '__mk=(id,m,eff)=>({id,apiProvider:"openai",openAiBaseUrl:__u,openAiApiKey:__k,openAiModelId:m,'
     + 'enableReasoningEffort:true,reasoningEffort:eff,'
     + 'openAiCustomModelInfo:{maxTokens:null,maxThinkingTokens:null,contextWindow:1e6,supportsImages:true,supportsPromptCache:true,supportsReasoningEffort:true,reasoningEffort:eff}}),'
-    + '__cf={},__md={},'
     + '__effMap={"visualvibe-orchestrator":"high","visualvibe-code":"medium","visualvibe-ask":"medium","visualvibe-architect":"high","visualvibe-debug":"high","default":"medium"};'
-    + '__cf["default"]=__mk("default","visualvibe-default",__effMap["default"]);'
-    + 'for(const[m,p]of[["architect","visualvibe-architect"],["code","visualvibe-code"],'
-    + '["ask","visualvibe-ask"],["debug","visualvibe-debug"],["orchestrator","visualvibe-orchestrator"]])'
-    + '{__cf[p]=__mk(p,p,__effMap[p]||"medium");__md[m]=p;}'
-    + 'try{await __CTX__.secrets.store(__vvk,JSON.stringify({currentApiConfigName:"default",'
-    + 'apiConfigs:__cf,modeApiConfigs:__md,'
-    + 'migrations:{rateLimitSecondsMigrated:true,openAiHeadersMigrated:true,'
-    + 'consecutiveMistakeLimitMigrated:true,todoListEnabledMigrated:true,'
-    + 'claudeCodeLegacySettingsMigrated:true,routerProviderMigrated:true}}));'
-    + '__log("profiles stored OK");}'
+    + 'let __existing=null;'
+    + 'try{const __raw=await __CTX__.secrets.get(__vvk);if(__raw){__existing=JSON.parse(__raw);}}catch(__re){__log("read/parse existing profiles failed: "+(__re&&__re.message?__re.message:__re));__existing=null;}'
+    + 'const __exCf=(__existing&&typeof __existing.apiConfigs==="object"&&__existing.apiConfigs!==null)?__existing.apiConfigs:{};'
+    + 'const __gsMd=__CTX__.globalState.get("modeApiConfigs");'
+    + 'const __exMd={...((typeof __gsMd==="object"&&__gsMd!==null)?__gsMd:{}),...((__existing&&typeof __existing.modeApiConfigs==="object"&&__existing.modeApiConfigs!==null)?__existing.modeApiConfigs:{})};'
+    + 'const __isSys=(n)=>n==="default"||(typeof n==="string"&&n.startsWith("visualvibe-"));'
+    + 'const __mergedCf={};'
+    + 'for(const[n,p]of Object.entries(__exCf)){if(!__isSys(n)){__mergedCf[n]=p;}}'
+    + '__mergedCf["default"]=__mk("default","visualvibe-default",__effMap["default"]);'
+    + 'for(const[m,p]of[["architect","visualvibe-architect"],["code","visualvibe-code"],["ask","visualvibe-ask"],["debug","visualvibe-debug"],["orchestrator","visualvibe-orchestrator"]]){'
+    + '__mergedCf[p]=__mk(p,p,__effMap[p]||"medium");}'
+    + 'let __curName=(__existing&&typeof __existing.currentApiConfigName==="string")?__existing.currentApiConfigName:null;'
+    + 'if(!__curName||!__mergedCf[__curName]){__curName="default";}'
+    + 'const __mergedMd={...__exMd};'
+    + 'for(const[m,p]of[["architect","visualvibe-architect"],["code","visualvibe-code"],["ask","visualvibe-ask"],["debug","visualvibe-debug"],["orchestrator","visualvibe-orchestrator"]]){'
+    + '__mergedMd[m]=p;}'
+    + 'for(const[m,p]of Object.entries(__mergedMd)){if(!__mergedCf[p]){__mergedMd[m]="default";}}'
+    + 'const __sysMigrations={rateLimitSecondsMigrated:true,openAiHeadersMigrated:true,consecutiveMistakeLimitMigrated:true,toolRepetitionLimitsMigrated:true,todoListEnabledMigrated:true,claudeCodeLegacySettingsMigrated:true,routerProviderMigrated:true};'
+    + 'const __mergedMigrations={...((__existing&&typeof __existing.migrations==="object"&&__existing.migrations!==null)?__existing.migrations:{}),...__sysMigrations};'
+    + 'try{await __CTX__.secrets.store(__vvk,JSON.stringify({currentApiConfigName:__curName,apiConfigs:__mergedCf,modeApiConfigs:__mergedMd,migrations:__mergedMigrations}));'
+    + 'await __CTX__.globalState.update("modeApiConfigs",__mergedMd);'
+    + '__log("profiles merged & stored OK (total: "+Object.keys(__mergedCf).length+", user preserved: "+Object.keys(__mergedCf).filter(k=>!__isSys(k)).length+", active: "+__curName+")");}'
     + 'catch(__e1){__log("profiles store FAILED: "+(__e1&&__e1.message?__e1.message:__e1));}'
-    + 'try{await __CTX__.secrets.store("openAiApiKey",__k);'
-    + 'await __CTX__.globalState.update("apiProvider","openai");'
-    + 'await __CTX__.globalState.update("openAiBaseUrl",__u);'
-    + 'await __CTX__.globalState.update("enableReasoningEffort",true);'
-    + 'await __CTX__.globalState.update("reasoningEffort","medium");'
+    + 'try{if(!(await __CTX__.secrets.get("openAiApiKey"))){await __CTX__.secrets.store("openAiApiKey",__k);}'
+    + 'if(__CTX__.globalState.get("apiProvider")===undefined){await __CTX__.globalState.update("apiProvider","openai");}'
+    + 'if(__CTX__.globalState.get("openAiBaseUrl")===undefined){await __CTX__.globalState.update("openAiBaseUrl",__u);}'
+    + 'if(__CTX__.globalState.get("enableReasoningEffort")===undefined){await __CTX__.globalState.update("enableReasoningEffort",true);}'
+    + 'if(__CTX__.globalState.get("reasoningEffort")===undefined){await __CTX__.globalState.update("reasoningEffort","medium");}'
     + '__log("welcome keys stored OK");}'
     + 'catch(__e2){__log("welcome keys FAILED: "+(__e2&&__e2.message?__e2.message:__e2));}'
     + '}else{__log("env vars missing; skip seed");}'
-    + 'try{const __lang="' + zoo_lang() + '";'
-    + 'await __CTX__.globalState.update("language",__lang);'
-    + 'await __CTX__.globalState.update("autoApprovalEnabled",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowReadOnly",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowReadOnlyOutsideWorkspace",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowWrite",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowWriteOutsideWorkspace",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowWriteProtected",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowExecute",true);'
-    + 'await __CTX__.globalState.update("allowedCommands",["*"]);'
-    + 'await __CTX__.globalState.update("deniedCommands",[]);'
-    + 'await __CTX__.globalState.update("destructiveCommandGuardEnabled",false);'
-    + 'await __CTX__.globalState.update("alwaysAllowMcp",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowModeSwitch",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowSubtasks",true);'
-    + 'await __CTX__.globalState.update("alwaysAllowFollowupQuestions",false);'
-    + 'await __CTX__.globalState.update("experiments",{preventFocusDisruption:true});'
-    + '__log("settings stored OK (lang="+__lang+")");}'
+    + 'try{const __lang="' + zoo_lang() + '",'
+    + '__setIf=async(k,v)=>{if(__CTX__.globalState.get(k)===undefined){await __CTX__.globalState.update(k,v);}};'
+    + 'await __setIf("language",__lang);'
+    + 'await __setIf("preferredLanguage",__lang);'
+    + 'await __setIf("autoApprovalEnabled",true);'
+    + 'await __setIf("alwaysAllowReadOnly",true);'
+    + 'await __setIf("alwaysAllowReadOnlyOutsideWorkspace",true);'
+    + 'await __setIf("alwaysAllowWrite",true);'
+    + 'await __setIf("alwaysAllowWriteOutsideWorkspace",true);'
+    + 'await __setIf("alwaysAllowWriteProtected",true);'
+    + 'await __setIf("alwaysAllowExecute",true);'
+    + 'await __setIf("allowedCommands",["*"]);'
+    + 'await __setIf("deniedCommands",[]);'
+    + 'await __setIf("destructiveCommandGuardEnabled",false);'
+    + 'await __setIf("alwaysAllowMcp",true);'
+    + 'await __setIf("alwaysAllowModeSwitch",true);'
+    + 'await __setIf("alwaysAllowSubtasks",true);'
+    + 'await __setIf("alwaysAllowFollowupQuestions",false);'
+    + 'let __curExp=__CTX__.globalState.get("experiments");'
+    + 'if(__curExp===undefined){await __CTX__.globalState.update("experiments",{preventFocusDisruption:true});}'
+    + 'else if(typeof __curExp==="object"&&__curExp!==null&&__curExp.preventFocusDisruption===undefined){await __CTX__.globalState.update("experiments",{...__curExp,preventFocusDisruption:true});}'
+    + '__log("settings conditionally initialized OK (lang="+__lang+")");}'
     + 'catch(__e3){__log("settings FAILED: "+(__e3&&__e3.message?__e3.message:__e3));}'
     + '}catch(__e0){__log("seed outer FAILED: "+(__e0&&__e0.message?__e0.message:__e0))}'
 )
