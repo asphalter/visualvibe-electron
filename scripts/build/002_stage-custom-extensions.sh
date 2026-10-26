@@ -16,4 +16,7 @@ fi
 if [ -d "$VV_EXTENSIONS/vv-update-checker" ]; then
     mv "$VV_EXTENSIONS/vv-update-checker" "$VV_EXTENSIONS/visualvibe.vv-update-checker-1.0.0"
 fi
+if [ -d "$VV_EXTENSIONS/vv-telegram-bridge" ]; then
+    mv "$VV_EXTENSIONS/vv-telegram-bridge" "$VV_EXTENSIONS/visualvibe.vv-telegram-bridge-1.0.0"
+fi
 vv_log INFO "Staged custom extensions successfully."

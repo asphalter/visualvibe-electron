@@ -1,0 +1,41 @@
+{
+  "name": "vv-telegram-bridge",
+  "displayName": "VisualVibe Telegram Bridge",
+  "description": "Telegram bridge for remote monitoring and interaction with Zoo Code in VisualVibe Electron",
+  "version": "1.0.0",
+  "publisher": "visualvibe",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "visualvibe.telegram.toggle",
+        "title": "VisualVibe Telegram: Toggle",
+        "category": "VisualVibe"
+      },
+      {
+        "command": "visualvibe.telegram.start",
+        "title": "VisualVibe Telegram: Start Bridge",
+        "category": "VisualVibe"
+      },
+      {
+        "command": "visualvibe.telegram.stop",
+        "title": "VisualVibe Telegram: Stop Bridge",
+        "category": "VisualVibe"
+      },
+      {
+        "command": "visualvibe.telegram.status",
+        "title": "VisualVibe Telegram: Show Status",
+        "category": "VisualVibe"
+      }
+    ]
+  },
+  "categories": [
+    "Other"
+  ]
+}

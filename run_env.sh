@@ -29,6 +29,9 @@ HOST_PORT="${VISUALVIBE_PORT:-80}"
 AI_API_URL="${AI_API_URL:-}"
 AI_API_KEY="${AI_API_KEY:-}"
 AI_LANG="${AI_LANG:-}"
+TZ="${TZ:-Europe/Rome}"
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_ALLOWED_USER_ID="${TELEGRAM_ALLOWED_USER_ID:-}"
 # FIX R-01: --no-build flag skips the image build step for faster restarts
 SKIP_BUILD=false
 for _arg in "$@"; do
@@ -67,6 +70,9 @@ echo -e "  Home Volume:         ${BOLD}${VOLUME_NAME}${NC}"
 echo -e "  AI API URL:          ${BOLD}${AI_API_URL:-<not set>}${NC}"
 echo -e "  AI API Key:          ${BOLD}$([ -n "${AI_API_KEY:-}" ] && echo "<configured>" || echo "<not set>")${NC}"
 echo -e "  AI Language:         ${BOLD}${AI_LANG:-<not set>}${NC}"
+echo -e "  Timezone (TZ):       ${BOLD}${TZ:-<not set>}${NC}"
+echo -e "  Telegram Token:      ${BOLD}$([ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "<configured>" || echo "<not set>")${NC}"
+echo -e "  Telegram User ID:    ${BOLD}${TELEGRAM_ALLOWED_USER_ID:-<not set>}${NC}"
 echo ""
 
 # Validate mandatory environment variables
@@ -137,6 +143,9 @@ podman run -d \
     -e AI_API_URL="${AI_API_URL}" \
     -e AI_API_KEY="${AI_API_KEY}" \
     -e AI_LANG="${AI_LANG}" \
+    -e TZ="${TZ}" \
+    -e TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}" \
+    -e TELEGRAM_ALLOWED_USER_ID="${TELEGRAM_ALLOWED_USER_ID}" \
     -v "${VOLUME_NAME}:/home/vvelectron" \
     -p "${HOST_PORT}:80" \
     "${IMAGE_NAME}" < /dev/null

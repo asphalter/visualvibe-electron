@@ -109,6 +109,7 @@ fi
 
 sync_custom_ext "vv-project-picker" "visualvibe.vv-project-picker" "1.0.0"
 sync_custom_ext "vv-update-checker" "visualvibe.vv-update-checker" "1.0.0"
+sync_custom_ext "vv-telegram-bridge" "visualvibe.vv-telegram-bridge" "1.0.0"
 
 # Fix ownership
 chown -R "${VV_USER}:${VV_USER}" "$EXT_DIR" 2>/dev/null || true
