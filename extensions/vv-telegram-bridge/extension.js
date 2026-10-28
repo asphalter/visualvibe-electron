@@ -11,6 +11,7 @@ const vscode = require('vscode');
 const https = require('https');
 const os = require('os');
 const path = require('path');
+const fs = require('fs');
 
 // --- Bridge States ---
 const BridgeState = {
@@ -40,6 +41,7 @@ const MESSAGES = {
       '━━━━━━━━━━━━━━━━━━━━━━',
       'The bridge is ready to receive commands.',
       'Available commands:',
+      '  /projects — Browse projects and manage chats',
       '  /status  — Check workspace and agent status',
       '  /stop    — Deactivate Telegram bridge',
       '  /help    — Show supported commands',
@@ -50,15 +52,34 @@ const MESSAGES = {
     accessDenied: '⛔ *Access Denied*\nThis Telegram bot is private and only accepts commands from the configured authorized user.',
     unauthorizedCallback: '⛔ Unauthorized',
     stopRequested: '⏹️ Bridge deactivation requested from Telegram.',
+    stopConfirmationPrompt: '⚠️ *Warning: confirm shutdown*\n\nStopping the bridge will disable Telegram access. To re-enable it, you will need to access the graphical desktop from the web page and click the status bar icon in VisualVibe Electron.\n\nAre you sure you want to proceed?',
+    btnStopProceed: '🛑 Proceed',
+    btnStopCancel: '❌ Cancel',
+    stopCancelled: '✅ Operation cancelled. The Telegram bridge remains active.',
     help: [
       '📖 *VisualVibe Telegram Bridge Commands*',
       '━━━━━━━━━━━━━━━━━━━━━━',
-      '• `/status` — Show workspace, VSCodium, and Zoo Code status',
-      '• `/stop`   — Deactivate and disconnect the Telegram bridge',
-      '• `/help`   — Show this guide',
+      '• `/projects` — Browse projects and manage chats',
+      '• `/status`   — Show workspace, VSCodium, and Zoo Code status',
+      '• `/stop`     — Deactivate and disconnect the Telegram bridge',
+      '• `/help`     — Show this guide',
       '',
       'All other text messages are forwarded to Zoo Code as instructions or conversation replies.'
     ].join('\n'),
+    projectsTitle: (p) => (p && p.project
+      ? `📁 *Current project:* \`${p.project}\`\n\nSelect a project to browse chats or switch workspace:`
+      : '📁 *Available Projects:*\nSelect a project to browse chats or switch workspace:'),
+    noProjectsFound: '⚠️ No project directories found in workspace root.',
+    selectChatTitle: (p) => `📁 *Project:* \`${p.project}\`\nSelect a chat to resume or create a new one:`,
+    noChatsFound: 'ℹ️ No previous chats found for this project.',
+    btnNewChat: '➕ New Chat',
+    btnBack: '⬅️ Back',
+    btnRollback: '⬅️ Back to Previous Project',
+    chatSelected: (p) => `✅ Active chat set to: *"${p.title}"*`,
+    newChatCreated: (p) => `✨ New chat started for *${p.project}*`,
+    navCancelled: '❌ Operation cancelled.',
+    switchingWorkspace: (p) => `🔄 Switching workspace to \`${p.project}\`...\nThe bridge will reconnect shortly.`,
+    workspaceSwitched: (p) => `✅ Workspace switched to \`${p.project}\`.`,
     status: (p) => [
       '📊 *VisualVibe Electron & Zoo Code Status*',
       '━━━━━━━━━━━━━━━━━━━━━━',
@@ -125,6 +146,7 @@ const MESSAGES = {
       '━━━━━━━━━━━━━━━━━━━━━━',
       'Il bridge è pronto a ricevere comandi.',
       'Comandi disponibili:',
+      '  /projects — Naviga tra i progetti e gestisci le chat',
       '  /status  — Controlla lo stato dell\'area di lavoro e dell\'agente',
       '  /stop    — Disattiva il bridge Telegram',
       '  /help    — Mostra i comandi supportati',
@@ -135,15 +157,34 @@ const MESSAGES = {
     accessDenied: '⛔ *Accesso negato*\nQuesto bot Telegram è privato e accetta comandi solo dall\'utente autorizzato configurato.',
     unauthorizedCallback: '⛔ Non autorizzato',
     stopRequested: '⏹️ Richiesta di disattivazione del bridge ricevuta da Telegram.',
+    stopConfirmationPrompt: '⚠️ *Attenzione: conferma arresto*\n\nIl comando di arresto disattiverà il bot Telegram. Per riattivarlo sarà necessario accedere all\'interfaccia grafica dalla pagina web e cliccare sull\'icona nella barra di stato di VisualVibe Electron.\n\nSei sicuro di voler procedere?',
+    btnStopProceed: '🛑 Procedi',
+    btnStopCancel: '❌ Annulla',
+    stopCancelled: '✅ Operazione annullata. Il bridge Telegram rimane attivo.',
     help: [
       '📖 *Comandi VisualVibe Telegram Bridge*',
       '━━━━━━━━━━━━━━━━━━━━━━',
-      '• `/status` — Mostra lo stato dell\'area di lavoro, VSCodium e Zoo Code',
-      '• `/stop`   — Disattiva e disconnette il bridge Telegram',
-      '• `/help`   — Mostra questa guida',
+      '• `/projects` — Naviga tra i progetti e gestisci le chat',
+      '• `/status`   — Mostra lo stato dell\'area di lavoro, VSCodium e Zoo Code',
+      '• `/stop`     — Disattiva e disconnette il bridge Telegram',
+      '• `/help`     — Mostra questa guida',
       '',
       'Tutti gli altri messaggi di testo verranno inoltrati a Zoo Code come istruzioni o risposte di conversazione.'
     ].join('\n'),
+    projectsTitle: (p) => (p && p.project
+      ? `📁 *Progetto attuale:* \`${p.project}\`\n\nSeleziona un progetto per visualizzare le chat o cambiare workspace:`
+      : '📁 *Progetti Disponibili:*\nSeleziona un progetto per visualizzare le chat o cambiare workspace:'),
+    noProjectsFound: '⚠️ Nessuna cartella di progetto trovata nella directory radice.',
+    selectChatTitle: (p) => `📁 *Progetto:* \`${p.project}\`\nSeleziona una chat da riprendere o creane una nuova:`,
+    noChatsFound: 'ℹ️ Nessuna chat precedente trovata per questo progetto.',
+    btnNewChat: '➕ Nuova Chat',
+    btnBack: '⬅️ Indietro',
+    btnRollback: '⬅️ Torna al Progetto Precedente',
+    chatSelected: (p) => `✅ Chat attiva impostata su: *"${p.title}"*`,
+    newChatCreated: (p) => `✨ Nuova chat avviata per *${p.project}*`,
+    navCancelled: '❌ Operazione annullata.',
+    switchingWorkspace: (p) => `🔄 Cambio workspace in corso verso \`${p.project}\`...\nIl bridge si ricollegherà a breve.`,
+    workspaceSwitched: (p) => `✅ Passaggio al workspace \`${p.project}\` completato.`,
     status: (p) => [
       '📊 *Stato di VisualVibe Electron & Zoo Code*',
       '━━━━━━━━━━━━━━━━━━━━━━',
@@ -198,6 +239,306 @@ const MESSAGES = {
     messageForwarded: '📨 Messaggio inoltrato a Zoo Code.',
     apiNotice: (p) => `⚠️ *Avviso*: Ricevuto messaggio: "${p.text}". L'interfaccia API di Zoo Code non espone sendMessage. Controlla l'interfaccia di VSCodium.`,
     errorForwarding: (p) => `❌ Errore durante l'inoltro a Zoo Code: ${p.error}`
+  },
+  es: {
+    welcome: (p) => [
+      '🚀 *VisualVibe Telegram Bridge Conectado*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `• *Espacio de trabajo:* \`${p.workspace}\``,
+      `• *Host:* \`${p.host}\` (VisualVibe Electron)`,
+      `• *Bot:* @${p.bot}`,
+      `• *Fecha/Hora:* ${p.date}`,
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      'El puente está listo para recibir comandos.',
+      'Comandos disponibles:',
+      '  /projects — Explorar proyectos y gestionar chats',
+      '  /status  — Verificar estado del espacio de trabajo y agente',
+      '  /stop    — Desactivar el puente de Telegram',
+      '  /help    — Mostrar comandos compatibles',
+      '',
+      'Envía cualquier mensaje para iniciar o continuar una tarea con Zoo Code.'
+    ].join('\n'),
+    disconnected: '⏹️ *VisualVibe Telegram Bridge Desconectado*\nEl puente fue desactivado desde la interfaz de VSCodium.',
+    accessDenied: '⛔ *Acceso Denegado*\nEste bot de Telegram es privado y solo acepta comandos del usuario autorizado configurado.',
+    unauthorizedCallback: '⛔ No autorizado',
+    stopRequested: '⏹️ Desactivación del puente solicitada desde Telegram.',
+    stopConfirmationPrompt: '⚠️ *Advertencia: confirmar apagado*\n\nDetener el puente deshabilitará el acceso por Telegram. Para reactivarlo, deberás acceder al escritorio gráfico desde la página web y hacer clic en el icono de la barra de estado de VisualVibe Electron.\n\n¿Estás seguro de que deseas continuar?',
+    btnStopProceed: '🛑 Proceder',
+    btnStopCancel: '❌ Cancelar',
+    stopCancelled: '✅ Operación cancelada. El puente de Telegram permanece activo.',
+    help: [
+      '📖 *Comandos de VisualVibe Telegram Bridge*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      '• `/projects` — Explorar proyectos y gestionar chats',
+      '• `/status`   — Mostrar estado del espacio de trabajo, VSCodium y Zoo Code',
+      '• `/stop`     — Desactivar y desconectar el puente de Telegram',
+      '• `/help`     — Mostrar esta guía',
+      '',
+      'Todos los demás mensajes de texto se reenvían a Zoo Code como instrucciones o conversación.'
+    ].join('\n'),
+    projectsTitle: (p) => `📂 *Proyectos VisualVibe*\nEspacio de trabajo actual: \`${p.current}\`\nSelecciona un proyecto a continuación:`,
+    noProjectsFound: '⚠️ No se encontraron proyectos en `/home/vvelectron/VisualVibe Workdirs`.',
+    selectChatTitle: (p) => `📂 *Proyecto: \`${p.project}\`*\nSelecciona una sesión de chat o crea una nueva:`,
+    noChatsFound: '💬 No se encontraron chats existentes para este proyecto.',
+    btnNewChat: '➕ Nuevo Chat',
+    btnBack: '⬅️ Volver',
+    btnRollback: '⬅️ Volver al Proyecto Anterior',
+    chatSelected: (p) => `✅ Chat activo configurado en: *"${p.title}"*`,
+    newChatCreated: (p) => `✨ Nuevo chat iniciado para *${p.project}*`,
+    navCancelled: '❌ Operación cancelada.',
+    switchingWorkspace: (p) => `🔄 Cambiando espacio de trabajo a \`${p.project}\`...\nEl puente se reconectará en breve.`,
+    workspaceSwitched: (p) => `✅ Espacio de trabajo cambiado a \`${p.project}\`.`,
+    status: (p) => [
+      '📊 *Estado de VisualVibe Electron & Zoo Code*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `• *Espacio de trabajo:* \`${p.workspace}\``,
+      `• *Host:* \`${p.host}\``,
+      `• *Estado del puente:* \`ACTIVE\``,
+      `• *Zoo Code:* ${p.zooStatus}`,
+      `• *Actividad:* ${p.activityStatus}`,
+      `• *Fecha/Hora:* ${p.date}`,
+      '━━━━━━━━━━━━━━━━━━━━━━'
+    ].join('\n'),
+    executionIdle: '💤 Inactivo',
+    executionSubtaskInProgress: (p) => `🔄 En curso (Subtarea: ${p.profile})`,
+    executionTaskInProgress: (p) => `🔄 En curso (Tarea: ${p.profile})`,
+    zooStatusAvailable: 'Disponible',
+    zooStatusNotInstalled: 'No instalado',
+    zooStatusInactive: 'Inactivo (se activará con la primera solicitud)',
+    zooStatusActive: 'Activo e integrado',
+    zooStatusError: (p) => `Error de comprobación: ${p.error}`,
+    noWorkspace: 'Ningún espacio de trabajo abierto',
+    toolAuthMessage: (p) => [
+      '⚠️ *Solicitud de Autorización de Herramienta Zoo Code*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `*Acción:* \`${p.toolName}\``,
+      '',
+      p.description,
+      '━━━━━━━━━━━━━━━━━━━━━━'
+    ].join('\n'),
+    toolDefaultName: 'Acción / Modificación',
+    toolDefaultDescription: 'Zoo Code requiere autorización para continuar.',
+    btnApprove: '✅ Aprobar',
+    btnReject: '❌ Rechazar',
+    btnApprovedByUser: '✅ Aprobado por el usuario',
+    btnRejectedByUser: '❌ Rechazado por el usuario',
+    approvalSent: 'Autorización enviada a Zoo Code',
+    rejectionSent: 'Rechazo enviado a Zoo Code',
+    taskCompletedPrefix: (p) => `🏁 *Zoo Code — Resultado Final [Perfil: ${p.profile}]*\n\n`,
+    subtaskCompletedPrefix: (p) => `🧩 *Zoo Code — Subtarea Completada [Perfil: ${p.profile}]*\n\n`,
+    mainTaskCompletedPrefix: (p) => `🎯 *Zoo Code — Tarea Principal Completada [Perfil: ${p.profile}]*\n\n`,
+    subtaskStarted: (p) => `🚀 *Zoo Code — Subtarea Iniciada [Perfil: ${p.profile}]*\n\n${p.text}`,
+    taskCompletedDefault: 'Tarea completada.',
+    followupQuestionPrefix: '❓ *Pregunta de Zoo Code:*\n\n',
+    followupAnswerSent: 'Opción seleccionada y enviada a Zoo Code',
+    followupSelectedPrefix: 'Opción seleccionada: ',
+    zooCodePrefix: (p) => `🤖 *Zoo Code [${p.profile}]:*\n\n`,
+    userPromptUiPrefix: '👤 *Mensaje desde la Interfaz Web:*\n\n',
+    messageRelayPrefix: '💬 *Reenvío desde la Interfaz Web:*\n\n',
+    taskStarted: '🤖 Tarea iniciada en VisualVibe.',
+    messageForwarded: '📨 Mensaje reenviado a Zoo Code.',
+    apiNotice: (p) => `⚠️ *Aviso*: Recibido mensaje: "${p.text}". La API de Zoo Code no expone sendMessage. Revisa la interfaz de VSCodium.`,
+    errorForwarding: (p) => `❌ Error al reenviar a Zoo Code: ${p.error}`
+  },
+  fr: {
+    welcome: (p) => [
+      '🚀 *VisualVibe Telegram Bridge Connecté*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `• *Espace de travail :* \`${p.workspace}\``,
+      `• *Hôte :* \`${p.host}\` (VisualVibe Electron)`,
+      `• *Bot :* @${p.bot}`,
+      `• *Date/Heure :* ${p.date}`,
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      'Le pont est prêt à recevoir des commandes.',
+      'Commandes disponibles :',
+      '  /projects — Parcourir les projets et gérer les discussions',
+      '  /status  — Vérifier l\'état de l\'espace de travail et de l\'agent',
+      '  /stop    — Désactiver le pont Telegram',
+      '  /help    — Afficher les commandes prises en charge',
+      '',
+      'Envoyez un message pour démarrer ou continuer une tâche avec Zoo Code.'
+    ].join('\n'),
+    disconnected: '⏹️ *VisualVibe Telegram Bridge Déconnecté*\nLe pont a été désactivé depuis l\'interface de VSCodium.',
+    accessDenied: '⛔ *Accès Refusé*\nCe bot Telegram est privé et n\'accepte que les commandes de l\'utilisateur autorisé configuré.',
+    unauthorizedCallback: '⛔ Non autorisé',
+    stopRequested: '⏹️ Désactivation du pont demandée depuis Telegram.',
+    stopConfirmationPrompt: '⚠️ *Attention : confirmer l\'arrêt*\n\nL\'arrêt du pont désactivera l\'accès via Telegram. Pour le réactiver, vous devrez accéder au bureau graphique depuis la page web et cliquer sur l\'icône de la barre d\'état de VisualVibe Electron.\n\nÊtes-vous sûr de vouloir continuer ?',
+    btnStopProceed: '🛑 Continuer',
+    btnStopCancel: '❌ Annuler',
+    stopCancelled: '✅ Opération annulée. Le pont Telegram reste actif.',
+    help: [
+      '📖 *Commandes de VisualVibe Telegram Bridge*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      '• `/projects` — Parcourir les projets et gérer les discussions',
+      '• `/status`   — Afficher l\'état de l\'espace de travail, de VSCodium et de Zoo Code',
+      '• `/stop`     — Désactiver et déconnecter le pont Telegram',
+      '• `/help`     — Afficher ce guide',
+      '',
+      'Tous les autres messages texte sont transmis à Zoo Code en tant qu\'instructions ou conversation.'
+    ].join('\n'),
+    projectsTitle: (p) => `📂 *Projets VisualVibe*\nEspace de travail actuel : \`${p.current}\`\nSélectionnez un projet ci-dessous :`,
+    noProjectsFound: '⚠️ Aucun projet trouvé dans `/home/vvelectron/VisualVibe Workdirs`.',
+    selectChatTitle: (p) => `📂 *Projet : \`${p.project}\`*\nSélectionnez une session de discussion ou créez-en une nouvelle :`,
+    noChatsFound: '💬 Aucune discussion existante trouvée pour ce projet.',
+    btnNewChat: '➕ Nouvelle discussion',
+    btnBack: '⬅️ Retour',
+    btnRollback: '⬅️ Retour au Projet Précédent',
+    chatSelected: (p) => `✅ Discussion active définie sur : *"${p.title}"*`,
+    newChatCreated: (p) => `✨ Nouvelle discussion démarrée pour *${p.project}*`,
+    navCancelled: '❌ Opération annulée.',
+    switchingWorkspace: (p) => `🔄 Basculement vers l'espace de travail \`${p.project}\`...\nLe pont se reconnectera sous peu.`,
+    workspaceSwitched: (p) => `✅ Espace de travail basculé vers \`${p.project}\`.`,
+    status: (p) => [
+      '📊 *État de VisualVibe Electron & Zoo Code*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `• *Espace de travail :* \`${p.workspace}\``,
+      `• *Hôte :* \`${p.host}\``,
+      `• *État du pont :* \`ACTIVE\``,
+      `• *Zoo Code :* ${p.zooStatus}`,
+      `• *Activité :* ${p.activityStatus}`,
+      `• *Date/Heure :* ${p.date}`,
+      '━━━━━━━━━━━━━━━━━━━━━━'
+    ].join('\n'),
+    executionIdle: '💤 Inactif',
+    executionSubtaskInProgress: (p) => `🔄 En cours (Sous-tâche : ${p.profile})`,
+    executionTaskInProgress: (p) => `🔄 En cours (Tâche : ${p.profile})`,
+    zooStatusAvailable: 'Disponible',
+    zooStatusNotInstalled: 'Non installé',
+    zooStatusInactive: 'Inactif (sera activé dès la première requête)',
+    zooStatusActive: 'Actif et intégré',
+    zooStatusError: (p) => `Erreur de vérification : ${p.error}`,
+    noWorkspace: 'Aucun espace de travail ouvert',
+    toolAuthMessage: (p) => [
+      '⚠️ *Demande d\'Autorisation d\'Outil Zoo Code*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `*Action :* \`${p.toolName}\``,
+      '',
+      p.description,
+      '━━━━━━━━━━━━━━━━━━━━━━'
+    ].join('\n'),
+    toolDefaultName: 'Action / Modification',
+    toolDefaultDescription: 'Zoo Code nécessite une autorisation pour continuer.',
+    btnApprove: '✅ Approuver',
+    btnReject: '❌ Rejeter',
+    btnApprovedByUser: '✅ Approuvé par l\'utilisateur',
+    btnRejectedByUser: '❌ Rejeté par l\'utilisateur',
+    approvalSent: 'Autorisation envoyée à Zoo Code',
+    rejectionSent: 'Rejet envoyé à Zoo Code',
+    taskCompletedPrefix: (p) => `🏁 *Zoo Code — Résultat Final [Profil : ${p.profile}]*\n\n`,
+    subtaskCompletedPrefix: (p) => `🧩 *Zoo Code — Sous-tâche Terminée [Profil : ${p.profile}]*\n\n`,
+    mainTaskCompletedPrefix: (p) => `🎯 *Zoo Code — Tâche Principale Terminée [Profil : ${p.profile}]*\n\n`,
+    subtaskStarted: (p) => `🚀 *Zoo Code — Sous-tâche Démarrée [Profil : ${p.profile}]*\n\n${p.text}`,
+    taskCompletedDefault: 'Tâche terminée.',
+    followupQuestionPrefix: '❓ *Question de Zoo Code :*\n\n',
+    followupAnswerSent: 'Option sélectionnée et envoyée à Zoo Code',
+    followupSelectedPrefix: 'Option sélectionnée : ',
+    zooCodePrefix: (p) => `🤖 *Zoo Code [${p.profile}] :*\n\n`,
+    userPromptUiPrefix: '👤 *Invite depuis l\'Interface Web :*\n\n',
+    messageRelayPrefix: '💬 *Relais depuis l\'Interface Web :*\n\n',
+    taskStarted: '🤖 Tâche démarrée sur VisualVibe.',
+    messageForwarded: '📨 Message transmis à Zoo Code.',
+    apiNotice: (p) => `⚠️ *Avis* : Message reçu : "${p.text}". L'API de Zoo Code n'expose pas sendMessage. Vérifiez l'interface de VSCodium.`,
+    errorForwarding: (p) => `❌ Erreur lors de la transmission à Zoo Code : ${p.error}`
+  },
+  de: {
+    welcome: (p) => [
+      '🚀 *VisualVibe Telegram Bridge Verbunden*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `• *Workspace:* \`${p.workspace}\``,
+      `• *Host:* \`${p.host}\` (VisualVibe Electron)`,
+      `• *Bot:* @${p.bot}`,
+      `• *Datum/Uhrzeit:* ${p.date}`,
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      'Die Bridge ist bereit, Befehle zu empfangen.',
+      'Verfügbare Befehle:',
+      '  /projects — Projekte durchsuchen und Chats verwalten',
+      '  /status  — Workspace- und Agentenstatus prüfen',
+      '  /stop    — Telegram-Bridge deaktivieren',
+      '  /help    — Unterstützte Befehle anzeigen',
+      '',
+      'Sende eine Nachricht, um eine Aufgabe mit Zoo Code zu starten oder fortzusetzen.'
+    ].join('\n'),
+    disconnected: '⏹️ *VisualVibe Telegram Bridge Getrennt*\nDie Bridge wurde über die VSCodium-Benutzeroberfläche deaktiviert.',
+    accessDenied: '⛔ *Zugriff Verweigert*\nDieser Telegram-Bot ist privat und akzeptiert nur Befehle vom konfigurierten autorisierten Benutzer.',
+    unauthorizedCallback: '⛔ Nicht autorisiert',
+    stopRequested: '⏹️ Deaktivierung der Bridge über Telegram angefordert.',
+    stopConfirmationPrompt: '⚠️ *Warnung: Herunterfahren bestätigen*\n\nDas Anhalten der Bridge deaktiviert den Telegram-Zugriff. Um sie wieder zu aktivieren, müssen Sie über die Webseite auf die grafische Desktop-Oberfläche zugreifen und auf das Statusleisten-Symbol in VisualVibe Electron klicken.\n\nMöchten Sie wirklich fortfahren?',
+    btnStopProceed: '🛑 Fortfahren',
+    btnStopCancel: '❌ Abbrechen',
+    stopCancelled: '✅ Vorgang abgebrochen. Die Telegram-Bridge bleibt aktiv.',
+    help: [
+      '📖 *Befehle der VisualVibe Telegram Bridge*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      '• `/projects` — Projekte durchsuchen und Chats verwalten',
+      '• `/status`   — Status von Workspace, VSCodium und Zoo Code anzeigen',
+      '• `/stop`     — Telegram-Bridge deaktivieren und trennen',
+      '• `/help`     — Diese Anleitung anzeigen',
+      '',
+      'Alle anderen Textnachrichten werden als Anweisungen oder Gespräch an Zoo Code weitergeleitet.'
+    ].join('\n'),
+    projectsTitle: (p) => `📂 *VisualVibe-Projekte*\nAktueller Workspace: \`${p.current}\`\nWähle unten ein Projekt aus:`,
+    noProjectsFound: '⚠️ Keine Projekte in `/home/vvelectron/VisualVibe Workdirs` gefunden.',
+    selectChatTitle: (p) => `📂 *Projekt: \`${p.project}\`*\nWähle eine Chat-Sitzung oder erstelle eine neue:`,
+    noChatsFound: '💬 Keine vorhandenen Chats für dieses Projekt gefunden.',
+    btnNewChat: '➕ Neuer Chat',
+    btnBack: '⬅️ Zurück',
+    btnRollback: '⬅️ Zurück zum vorherigen Projekt',
+    chatSelected: (p) => `✅ Aktiver Chat festgelegt auf: *"${p.title}"*`,
+    newChatCreated: (p) => `✨ Neuer Chat gestartet für *${p.project}*`,
+    navCancelled: '❌ Vorgang abgebrochen.',
+    switchingWorkspace: (p) => `🔄 Wechsle zu Workspace \`${p.project}\`...\nDie Bridge verbindet sich in Kürze wieder.`,
+    workspaceSwitched: (p) => `✅ Workspace gewechselt zu \`${p.project}\`.`,
+    status: (p) => [
+      '📊 *Status von VisualVibe Electron & Zoo Code*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `• *Workspace:* \`${p.workspace}\``,
+      `• *Host:* \`${p.host}\``,
+      `• *Bridge-Status:* \`ACTIVE\``,
+      `• *Zoo Code:* ${p.zooStatus}`,
+      `• *Aktivität:* ${p.activityStatus}`,
+      `• *Datum/Uhrzeit:* ${p.date}`,
+      '━━━━━━━━━━━━━━━━━━━━━━'
+    ].join('\n'),
+    executionIdle: '💤 Im Leerlauf',
+    executionSubtaskInProgress: (p) => `🔄 In Bearbeitung (Teilaufgabe: ${p.profile})`,
+    executionTaskInProgress: (p) => `🔄 In Bearbeitung (Aufgabe: ${p.profile})`,
+    zooStatusAvailable: 'Verfügbar',
+    zooStatusNotInstalled: 'Nicht installiert',
+    zooStatusInactive: 'Inaktiv (wird bei der ersten Anfrage aktiviert)',
+    zooStatusActive: 'Aktiv und integriert',
+    zooStatusError: (p) => `Prüffehler: ${p.error}`,
+    noWorkspace: 'Kein Workspace geöffnet',
+    toolAuthMessage: (p) => [
+      '⚠️ *Zoo Code Tool-Autorisierungsanfrage*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `*Aktion:* \`${p.toolName}\``,
+      '',
+      p.description,
+      '━━━━━━━━━━━━━━━━━━━━━━'
+    ].join('\n'),
+    toolDefaultName: 'Aktion / Änderung',
+    toolDefaultDescription: 'Zoo Code benötigt eine Autorisierung, um fortzufahren.',
+    btnApprove: '✅ Genehmigen',
+    btnReject: '❌ Ablehnen',
+    btnApprovedByUser: '✅ Vom Benutzer genehmigt',
+    btnRejectedByUser: '❌ Vom Benutzer abgelehnt',
+    approvalSent: 'Autorisierung an Zoo Code gesendet',
+    rejectionSent: 'Ablehnung an Zoo Code gesendet',
+    taskCompletedPrefix: (p) => `🏁 *Zoo Code — Endergebnis [Profil: ${p.profile}]*\n\n`,
+    subtaskCompletedPrefix: (p) => `🧩 *Zoo Code — Teilaufgabe Abgeschlossen [Profil: ${p.profile}]*\n\n`,
+    mainTaskCompletedPrefix: (p) => `🎯 *Zoo Code — Hauptaufgabe Abgeschlossen [Profil: ${p.profile}]*\n\n`,
+    subtaskStarted: (p) => `🚀 *Zoo Code — Teilaufgabe Gestartet [Profil: ${p.profile}]*\n\n${p.text}`,
+    taskCompletedDefault: 'Aufgabe abgeschlossen.',
+    followupQuestionPrefix: '❓ *Frage von Zoo Code:*\n\n',
+    followupAnswerSent: 'Option ausgewählt und an Zoo Code gesendet',
+    followupSelectedPrefix: 'Ausgewählte Option: ',
+    zooCodePrefix: (p) => `🤖 *Zoo Code [${p.profile}]:*\n\n`,
+    userPromptUiPrefix: '👤 *Prompt über Web-Benutzeroberfläche:*\n\n',
+    messageRelayPrefix: '💬 *Weiterleitung über Web-Benutzeroberfläche:*\n\n',
+    taskStarted: '🤖 Aufgabe auf VisualVibe gestartet.',
+    messageForwarded: '📨 Nachricht an Zoo Code weitergeleitet.',
+    apiNotice: (p) => `⚠️ *Hinweis*: Nachricht erhalten: "${p.text}". Die Zoo Code-API unterstützt kein sendMessage. Bitte prüfe die VSCodium-Oberfläche.`,
+    errorForwarding: (p) => `❌ Fehler bei der Weiterleitung an Zoo Code: ${p.error}`
   }
 };
 
@@ -213,13 +554,13 @@ function resolveAiLang(envLang) {
   if (raw.startsWith('it') || raw === 'italiano' || raw === 'italian') {
     return 'it';
   }
-  if (raw.startsWith('es') || raw === 'español' || raw === 'spanish') {
+  if (raw.startsWith('es') || raw === 'spagnolo' || raw === 'spanish' || raw === 'español') {
     return 'es';
   }
-  if (raw.startsWith('fr') || raw === 'français' || raw === 'french') {
+  if (raw.startsWith('fr') || raw === 'francese' || raw === 'french' || raw === 'français') {
     return 'fr';
   }
-  if (raw.startsWith('de') || raw === 'deutsch' || raw === 'german') {
+  if (raw.startsWith('de') || raw === 'tedesco' || raw === 'german' || raw === 'deutsch') {
     return 'de';
   }
   const prefix = raw.split(/[-_]/)[0];
@@ -280,6 +621,170 @@ function t(key, params = {}, lang = null) {
     return val;
   }
   return key;
+}
+
+// --- Project Navigation & Active Session Handover Helpers ---
+const SESSION_HANDOVER_PATH = process.env.VV_TELEGRAM_HANDOVER_PATH || '/tmp/.vv_telegram_active_session';
+
+function formatTaskTimestamp(ts) {
+  if (!ts) return '';
+  const d = new Date(Number(ts));
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const mon = String(d.getMonth() + 1).padStart(2, '0');
+  const hr = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${day}/${mon} ${hr}:${min}`;
+}
+
+function getWorkdirsRoot() {
+  const custom = process.env.WORKDIRS_DIR;
+  if (custom && fs.existsSync(custom)) {
+    return custom;
+  }
+  const home = process.env.HOME || '/home/vvelectron';
+  const candidate = path.join(home, 'VisualVibe Workdirs');
+  if (fs.existsSync(candidate)) {
+    return candidate;
+  }
+  const current = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+  if (current) {
+    if (path.basename(current) === 'VisualVibe Workdirs') {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (path.basename(parent) === 'VisualVibe Workdirs') {
+      return parent;
+    }
+  }
+  return candidate;
+}
+
+function scanProjects(workdirsRoot) {
+  if (!workdirsRoot || !fs.existsSync(workdirsRoot)) {
+    return [];
+  }
+  try {
+    const entries = fs.readdirSync(workdirsRoot, { withFileTypes: true });
+    let ignoredList = ['tmp', '.git', '.vscode', 'node_modules', '__pycache__', 'VisualVibe Workdirs'];
+    const configCandidates = [
+      '/opt/visualvibe/config/ignored-dirs.json',
+      path.join(__dirname, '..', '..', 'config', 'ignored-dirs.json'),
+      path.join(__dirname, 'config', 'ignored-dirs.json')
+    ];
+    for (const cfg of configCandidates) {
+      if (fs.existsSync(cfg)) {
+        try {
+          ignoredList = JSON.parse(fs.readFileSync(cfg, 'utf8'));
+          break;
+        } catch (e) {}
+      }
+    }
+    const ignored = new Set(ignoredList);
+    const projects = [];
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      if (ent.name.startsWith('.')) continue;
+      if (ignored.has(ent.name)) continue;
+      const fullPath = path.join(workdirsRoot, ent.name);
+      projects.push({
+        name: ent.name,
+        path: fullPath
+      });
+    }
+    projects.sort((a, b) => a.name.localeCompare(b.name));
+    return projects;
+  } catch (err) {
+    return [];
+  }
+}
+
+async function getZooTasksForProject(projectPath, customTasksDir = null) {
+  const baseDir = customTasksDir || process.env.ZOO_TASKS_DIR || path.join(
+    process.env.HOME || '/home/vvelectron',
+    '.config',
+    'VSCodium',
+    'User',
+    'globalStorage',
+    'zoocodeorganization.zoo-code',
+    'tasks'
+  );
+  if (!fs.existsSync(baseDir)) {
+    return [];
+  }
+  try {
+    const entries = await fs.promises.readdir(baseDir, { withFileTypes: true });
+    const tasks = [];
+    const normalizedProj = projectPath ? path.resolve(projectPath) : '';
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const historyFile = path.join(baseDir, ent.name, 'history_item.json');
+      try {
+        if (fs.existsSync(historyFile)) {
+          const raw = await fs.promises.readFile(historyFile, 'utf8');
+          const item = JSON.parse(raw);
+          const itemWorkspace = item && item.workspace ? path.resolve(item.workspace) : '';
+          // Filtrare per workspace === projectPath e privi di parentTaskId
+          if (item && itemWorkspace === normalizedProj && !item.parentTaskId) {
+            tasks.push({
+              id: item.id || ent.name,
+              ts: Number(item.ts) || 0,
+              task: item.task || '',
+              workspace: item.workspace,
+              size: item.size,
+              totalCost: item.totalCost,
+              tokensIn: item.tokensIn,
+              tokensOut: item.tokensOut
+            });
+          }
+        }
+      } catch (readErr) {}
+    }
+    tasks.sort((a, b) => b.ts - a.ts);
+    return tasks;
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveSessionHandover(sessionData, filePath = SESSION_HANDOVER_PATH) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(sessionData, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function readSessionHandover(filePath = SESSION_HANDOVER_PATH, maxAgeMs = 60000) {
+  const candidates = [filePath, `${filePath}.json`];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      try {
+        const raw = fs.readFileSync(p, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && data.timestamp) {
+          const age = Date.now() - Number(data.timestamp);
+          if (age < maxAgeMs) {
+            return { data, path: p };
+          }
+        }
+        try { fs.unlinkSync(p); } catch (e) {}
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+function clearSessionHandover(filePath = SESSION_HANDOVER_PATH) {
+  const candidates = [filePath, `${filePath}.json`];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        fs.unlinkSync(p);
+      }
+    } catch (e) {}
+  }
 }
 
 // --- Telegram API Helper (Zero-dependency HTTPS Client) ---
@@ -431,6 +936,17 @@ class TelegramClient {
     return this.request('editMessageReplyMarkup', payload, signal).catch(() => {});
   }
 
+  async editMessageText(chatId, messageId, text, options = {}, signal = null) {
+    const payload = {
+      chat_id: chatId,
+      message_id: messageId,
+      text: text,
+      parse_mode: options.parse_mode,
+      reply_markup: options.reply_markup
+    };
+    return this.request('editMessageText', payload, signal);
+  }
+
   async getUpdates(offset = 0, timeout = 25, signal = null) {
     return this.request(
       'getUpdates',
@@ -469,6 +985,7 @@ class TelegramBridgeController {
     this.taskModelStarted = new Map();
     this.sentCompletionKeys = new Set();
     this.sentCompletionTasks = new Set();
+    this.processedCallbackIds = new Set();
 
     // Subtask & task hierarchy tracking
     this.taskHierarchy = new Map(); // taskId -> { isSubtask: boolean, mode: string, parentTaskId?: string }
@@ -484,6 +1001,11 @@ class TelegramBridgeController {
     this.currentTaskMode = null;
     this.currentSubtaskMode = null;
     this.isCurrentSubtask = false;
+
+    // Project and chat navigation state
+    this.cachedProjects = [];
+    this.cachedTasks = [];
+    this.navigationState = new Map();
   }
 
   trackTelegramPrompt(text) {
@@ -542,6 +1064,9 @@ class TelegramBridgeController {
 
   updateStatusBar(newState, customTooltip = null) {
     this.state = newState;
+    if (!this.statusBarItem) {
+      return;
+    }
     switch (newState) {
       case BridgeState.DISABLED: {
         const lang = resolveAiLang();
@@ -622,7 +1147,7 @@ class TelegramBridgeController {
     return t('executionTaskInProgress', { profile }, lang);
   }
 
-  async start() {
+  async start(isHandover = false) {
     if (this.state === BridgeState.ACTIVE || this.state === BridgeState.STARTING) {
       this.log('Start requested but bridge is already running or starting.');
       return;
@@ -643,15 +1168,19 @@ class TelegramBridgeController {
     this.updateStatusBar(BridgeState.STARTING);
     this.log('Starting VisualVibe Telegram Bridge...');
 
-    this.telegramClient = new TelegramClient(creds.botToken);
+    if (!this.telegramClient) {
+      this.telegramClient = new TelegramClient(creds.botToken);
+    }
     this.allowedUserId = creds.allowedUserId;
 
-    // Validate bot token via getMe
+    // Validate bot token via getMe if not already populated
     try {
       this.pollingAbortController = new AbortController();
-      const me = await this.telegramClient.getMe(this.pollingAbortController.signal);
-      this.botInfo = me;
-      this.log(`Telegram Bot verified: @${me.username} (${me.first_name}, ID: ${me.id})`);
+      if (!this.botInfo && typeof this.telegramClient.getMe === 'function') {
+        const me = await this.telegramClient.getMe(this.pollingAbortController.signal);
+        this.botInfo = me;
+        this.log(`Telegram Bot verified: @${me.username} (${me.first_name}, ID: ${me.id})`);
+      }
     } catch (err) {
       this.log(`Failed to verify Telegram Bot token: ${err.message}`);
       vscode.window.showErrorMessage(`VisualVibe Telegram: Could not connect to Telegram bot: ${err.message}`);
@@ -662,25 +1191,27 @@ class TelegramBridgeController {
     // Connect to Zoo Code extension and listen for events
     await this.setupZooCodeIntegration();
 
-    // Send welcome / handshake message to Telegram
-    try {
-      const workspaceFolder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
-        ? vscode.workspace.workspaceFolders[0].name
-        : t('noWorkspace');
-      const hostname = os.hostname();
-      const dateLocale = resolveAiLang() === 'it' ? 'it-IT' : 'en-US';
-      const nowStr = new Date().toLocaleString(dateLocale, { timeZone: 'Europe/Rome' });
+    // Send welcome / handshake message to Telegram (skip on session handover)
+    if (!isHandover) {
+      try {
+        const workspaceFolder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0]
+          ? vscode.workspace.workspaceFolders[0].name
+          : t('noWorkspace');
+        const hostname = os.hostname();
+        const dateLocale = resolveAiLang() === 'it' ? 'it-IT' : 'en-US';
+        const nowStr = new Date().toLocaleString(dateLocale, { timeZone: 'Europe/Rome' });
 
-      const welcomeMsg = t('welcome', {
-        workspace: workspaceFolder,
-        host: hostname,
-        bot: this.botInfo.username,
-        date: nowStr
-      });
+        const welcomeMsg = t('welcome', {
+          workspace: workspaceFolder,
+          host: hostname,
+          bot: this.botInfo.username,
+          date: nowStr
+        });
 
-      await this.telegramClient.sendMessage(this.allowedUserId, welcomeMsg, { parse_mode: 'Markdown' });
-    } catch (sendErr) {
-      this.log(`Notice: Could not send handshake message to allowed chat ${this.allowedUserId}: ${sendErr.message}`);
+        await this.telegramClient.sendMessage(this.allowedUserId, welcomeMsg, { parse_mode: 'Markdown' });
+      } catch (sendErr) {
+        this.log(`Notice: Could not send handshake message to allowed chat ${this.allowedUserId}: ${sendErr.message}`);
+      }
     }
 
     // Update status to ACTIVE
@@ -883,6 +1414,19 @@ class TelegramBridgeController {
       return;
     }
 
+    if (cb.id) {
+      if (this.processedCallbackIds.has(cb.id)) {
+        this.log(`Duplicate callback query ignored: ${cb.id}`);
+        await this.telegramClient.answerCallbackQuery(cb.id).catch(() => {});
+        return;
+      }
+      this.processedCallbackIds.add(cb.id);
+      if (this.processedCallbackIds.size > 200) {
+        const oldest = this.processedCallbackIds.values().next().value;
+        this.processedCallbackIds.delete(oldest);
+      }
+    }
+
     const data = cb.data;
     this.log(`Received callback query: ${data}`);
 
@@ -923,6 +1467,138 @@ class TelegramBridgeController {
         } else {
           await this.telegramClient.answerCallbackQuery(cb.id);
         }
+      } else if (typeof data === 'string' && data.startsWith('proj:')) {
+        const idx = parseInt(data.substring(5), 10);
+        const projects = (this.cachedProjects && this.cachedProjects.length > 0)
+          ? this.cachedProjects
+          : (this.navigationState.get(chatId)?.projects || scanProjects(getWorkdirsRoot()));
+        const proj = projects[idx];
+        if (!proj) {
+          await this.telegramClient.answerCallbackQuery(cb.id, 'Progetto non valido');
+          return;
+        }
+        await this.telegramClient.answerCallbackQuery(cb.id);
+
+        const currentWs = path.resolve(this.getWorkspacePath());
+        const targetWs = path.resolve(proj.path);
+
+        if (currentWs === targetWs) {
+          await this.showProjectChats(chatId, targetWs, null, null, cb.message?.message_id);
+        } else {
+          saveSessionHandover({
+            timestamp: Date.now(),
+            chatId: chatId,
+            lastUpdateId: this.lastUpdateId,
+            previousWorkspace: currentWs,
+            previousTaskId: this.rootTaskId || null,
+            targetWorkspace: targetWs,
+            intent: 'show_project_chats'
+          });
+
+          await this.telegramClient.sendMessage(
+            chatId,
+            t('switchingWorkspace', { project: proj.name }),
+            { parse_mode: 'Markdown' }
+          );
+
+          if (chatId && cb.message?.message_id) {
+            await this.telegramClient.editMessageReplyMarkup(chatId, cb.message.message_id);
+          }
+
+          await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(proj.path), false);
+        }
+      } else if (typeof data === 'string' && data.startsWith('chat:')) {
+        const chatParam = data.substring(5);
+        await this.telegramClient.answerCallbackQuery(cb.id);
+
+        if (chatParam === 'new') {
+          await this.invokeZooCodeClearTask();
+          this.rootTaskId = null;
+          const wsName = this.getWorkspaceName();
+          await this.telegramClient.sendMessage(
+            chatId,
+            t('newChatCreated', { project: wsName }),
+            { parse_mode: 'Markdown' }
+          );
+          if (chatId && cb.message?.message_id) {
+            await this.telegramClient.editMessageReplyMarkup(chatId, cb.message.message_id);
+          }
+          this.navigationState.delete(chatId);
+        } else {
+          const taskId = chatParam;
+          await this.invokeZooCodeShowTask(taskId);
+          this.rootTaskId = taskId;
+
+          let title = taskId;
+          const nav = this.navigationState.get(chatId);
+          const taskList = (nav && nav.tasks) || this.cachedTasks || [];
+          const found = taskList.find((tItem) => tItem.id === taskId);
+          if (found && found.task) {
+            title = found.task.trim().replace(/[\r\n]+/g, ' ');
+            if (title.length > 50) {
+              title = title.substring(0, 50) + '…';
+            }
+          }
+
+          await this.telegramClient.sendMessage(
+            chatId,
+            t('chatSelected', { title: title }),
+            { parse_mode: 'Markdown' }
+          );
+          if (chatId && cb.message?.message_id) {
+            await this.telegramClient.editMessageReplyMarkup(chatId, cb.message.message_id);
+          }
+          this.navigationState.delete(chatId);
+        }
+      } else if (data === 'nav:back') {
+        await this.telegramClient.answerCallbackQuery(cb.id);
+        const nav = this.navigationState.get(chatId);
+        if (nav && nav.step === 'chats') {
+          if (nav.previousWorkspace && path.resolve(nav.previousWorkspace) !== path.resolve(this.getWorkspacePath())) {
+            const prevWs = nav.previousWorkspace;
+            const prevTask = nav.previousTaskId;
+            saveSessionHandover({
+              timestamp: Date.now(),
+              chatId: chatId,
+              previousWorkspace: this.getWorkspacePath(),
+              previousTaskId: this.rootTaskId || null,
+              targetWorkspace: prevWs,
+              targetTaskId: prevTask,
+              intent: 'show_project_chats'
+            });
+
+            await this.telegramClient.sendMessage(
+              chatId,
+              t('switchingWorkspace', { project: path.basename(prevWs) }),
+              { parse_mode: 'Markdown' }
+            );
+            if (chatId && cb.message?.message_id) {
+              await this.telegramClient.editMessageReplyMarkup(chatId, cb.message.message_id);
+            }
+            await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(prevWs), false);
+            return;
+          }
+          await this.showProjectsList(chatId, cb.message?.message_id);
+          return;
+        }
+
+        this.navigationState.delete(chatId);
+        if (chatId && cb.message?.message_id) {
+          await this.telegramClient.editMessageReplyMarkup(chatId, cb.message.message_id);
+        }
+        await this.telegramClient.sendMessage(chatId, t('navCancelled'));
+      } else if (data === 'stop:confirm') {
+        await this.telegramClient.answerCallbackQuery(cb.id);
+        if (chatId && cb.message?.message_id) {
+          await this.telegramClient.editMessageReplyMarkup(chatId, cb.message.message_id).catch(() => {});
+        }
+        await this.stop();
+      } else if (data === 'stop:cancel') {
+        await this.telegramClient.answerCallbackQuery(cb.id);
+        if (chatId && cb.message?.message_id) {
+          await this.telegramClient.editMessageReplyMarkup(chatId, cb.message.message_id).catch(() => {});
+        }
+        await this.telegramClient.sendMessage(chatId, t('stopCancelled'), { parse_mode: 'Markdown' });
       } else {
         await this.telegramClient.answerCallbackQuery(cb.id);
       }
@@ -965,13 +1641,28 @@ class TelegramBridgeController {
       }
 
       if (command === '/stop' || command === '/pause') {
-        await this.telegramClient.sendMessage(chatId, t('stopRequested'));
-        await this.stop(false);
+        const keyboard = {
+          inline_keyboard: [
+            [
+              { text: t('btnStopProceed'), callback_data: 'stop:confirm' },
+              { text: t('btnStopCancel'), callback_data: 'stop:cancel' }
+            ]
+          ]
+        };
+        await this.telegramClient.sendMessage(chatId, t('stopConfirmationPrompt'), {
+          parse_mode: 'Markdown',
+          reply_markup: keyboard
+        });
         return;
       }
 
       if (command === '/help' || command === '/start') {
         await this.telegramClient.sendMessage(chatId, t('help'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      if (command === '/projects' || command === '/project') {
+        await this.showProjectsList(chatId);
         return;
       }
     }
@@ -1014,6 +1705,239 @@ class TelegramBridgeController {
     });
 
     await this.telegramClient.sendMessage(chatId, statusMsg, { parse_mode: 'Markdown' });
+  }
+
+  getWorkspacePath() {
+    return vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '';
+  }
+
+  getWorkspaceName() {
+    const wsPath = this.getWorkspacePath();
+    if (wsPath) {
+      return path.basename(wsPath);
+    }
+    return vscode.workspace.workspaceFolders?.[0]?.name || t('noWorkspace');
+  }
+
+  async showProjectsList(chatId, editMessageId = null) {
+    const root = getWorkdirsRoot();
+    const projects = scanProjects(root);
+    this.cachedProjects = projects;
+    this.navigationState.set(chatId, { step: 'projects', projects });
+
+    if (projects.length === 0) {
+      await this.telegramClient.sendMessage(chatId, t('noProjectsFound'));
+      return;
+    }
+
+    const keyboard = projects.map((p, idx) => [
+      { text: `📁 ${p.name}`, callback_data: `proj:${idx}` }
+    ]);
+    keyboard.push([{ text: t('btnBack'), callback_data: 'nav:back' }]);
+
+    const currentProject = this.getWorkspaceName();
+    const titleText = t('projectsTitle', { project: currentProject });
+
+    if (editMessageId && typeof this.telegramClient?.editMessageText === 'function') {
+      try {
+        await this.telegramClient.editMessageText(chatId, editMessageId, titleText, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      } catch (editErr) {
+        this.log(`Could not edit message ${editMessageId}, falling back to sendMessage: ${editErr.message}`);
+      }
+    }
+
+    await this.telegramClient.sendMessage(chatId, titleText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboard }
+    });
+  }
+
+  async showProjectChats(chatId, projectPath, previousWorkspace = null, previousTaskId = null, editMessageId = null) {
+    const tasks = await getZooTasksForProject(projectPath);
+    this.cachedTasks = tasks;
+    this.navigationState.set(chatId, {
+      step: 'chats',
+      projectPath,
+      previousWorkspace,
+      previousTaskId,
+      tasks
+    });
+
+    const keyboard = [];
+    const displayTasks = tasks.slice(0, 10);
+    for (const task of displayTasks) {
+      const dateStr = formatTaskTimestamp(task.ts);
+      let promptText = (task.task || 'Chat').trim().replace(/[\r\n]+/g, ' ');
+      if (promptText.length > 25) {
+        promptText = promptText.substring(0, 25) + '…';
+      }
+      const label = dateStr ? `💬 ${dateStr} - ${promptText}` : `💬 ${promptText}`;
+      keyboard.push([{ text: label, callback_data: `chat:${task.id}` }]);
+    }
+
+    keyboard.push([{ text: t('btnNewChat'), callback_data: 'chat:new' }]);
+    const backBtnText = previousWorkspace ? t('btnRollback') : t('btnBack');
+    keyboard.push([{ text: backBtnText, callback_data: 'nav:back' }]);
+
+    let msgText = t('selectChatTitle', { project: path.basename(projectPath) });
+    if (tasks.length === 0) {
+      msgText += `\n\n${t('noChatsFound')}`;
+    }
+
+    if (editMessageId && typeof this.telegramClient?.editMessageText === 'function') {
+      try {
+        await this.telegramClient.editMessageText(chatId, editMessageId, msgText, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        return;
+      } catch (editErr) {
+        this.log(`Could not edit message ${editMessageId}, falling back to sendMessage: ${editErr.message}`);
+      }
+    }
+
+    await this.telegramClient.sendMessage(chatId, msgText, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: keyboard }
+    });
+  }
+
+  async invokeZooCodeShowTask(taskId) {
+    try {
+      const zooExt = vscode.extensions.getExtension('ZooCodeOrganization.zoo-code') ||
+                     vscode.extensions.getExtension('rooveterinaryinc.roo-cline');
+      if (zooExt && !zooExt.isActive) {
+        await zooExt.activate();
+      }
+      const api = zooExt ? zooExt.exports : null;
+      if (!api) {
+        this.log('Zoo Code API not available for showTask');
+        return false;
+      }
+
+      // Focus sidebar view so UI is active and webview launches if needed
+      await vscode.commands.executeCommand('zoo-code.SidebarProvider.focus').then(null, () => {});
+
+      // 1. Primary method in Zoo Code 3.92.0 API: api.resumeTask(taskId)
+      if (typeof api.resumeTask === 'function') {
+        this.log(`Invoking api.resumeTask("${taskId}")`);
+        await api.resumeTask(taskId);
+        return true;
+      }
+
+      // 2. Direct sidebarProvider method: showTaskWithId(taskId)
+      if (typeof api.sidebarProvider?.showTaskWithId === 'function') {
+        this.log(`Invoking api.sidebarProvider.showTaskWithId("${taskId}")`);
+        await api.sidebarProvider.showTaskWithId(taskId);
+        return true;
+      }
+
+      // 3. Fallbacks
+      if (typeof api.showTaskWithId === 'function') {
+        this.log(`Invoking api.showTaskWithId("${taskId}")`);
+        await api.showTaskWithId(taskId);
+        return true;
+      }
+      if (typeof api.controller?.showTaskWithId === 'function') {
+        this.log(`Invoking api.controller.showTaskWithId("${taskId}")`);
+        await api.controller.showTaskWithId(taskId);
+        return true;
+      }
+
+      // 4. Webview notification fallback
+      if (typeof api.sidebarProvider?.postMessageToWebview === 'function') {
+        await api.sidebarProvider.postMessageToWebview({ type: 'action', action: 'chatButtonClicked' });
+      }
+
+      return false;
+    } catch (e) {
+      this.log(`Error invoking showTaskWithId/resumeTask: ${e.message}`);
+      return false;
+    }
+  }
+
+  async invokeZooCodeClearTask() {
+    try {
+      const zooExt = vscode.extensions.getExtension('ZooCodeOrganization.zoo-code') ||
+                     vscode.extensions.getExtension('rooveterinaryinc.roo-cline');
+      if (zooExt && !zooExt.isActive) {
+        await zooExt.activate();
+      }
+      const api = zooExt ? zooExt.exports : null;
+      if (!api) return false;
+
+      // 1. Primary method in Zoo Code 3.92.0: clearCurrentTask()
+      if (typeof api.clearCurrentTask === 'function') {
+        await api.clearCurrentTask();
+        return true;
+      }
+      // 2. Direct sidebarProvider clearTask()
+      if (typeof api.sidebarProvider?.clearTask === 'function') {
+        await api.sidebarProvider.clearTask();
+        return true;
+      }
+      // 3. Fallbacks
+      if (typeof api.clearTask === 'function') {
+        await api.clearTask();
+        return true;
+      }
+      if (typeof api.controller?.clearTask === 'function') {
+        await api.controller.clearTask();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      this.log(`Error invoking clearTask: ${e.message}`);
+      return false;
+    }
+  }
+
+  async checkSessionHandover() {
+    const handover = readSessionHandover();
+    if (!handover) {
+      return false;
+    }
+    const { data, path: filePath } = handover;
+    this.log(`Found valid active session handover at ${filePath}: ${JSON.stringify(data)}`);
+    clearSessionHandover(filePath);
+
+    try {
+      if (typeof data.lastUpdateId === 'number') {
+        this.lastUpdateId = Math.max(this.lastUpdateId, data.lastUpdateId);
+      }
+      await this.start(true);
+      if (this.state === BridgeState.ACTIVE && data.chatId) {
+        const wsName = this.getWorkspaceName();
+        await this.telegramClient.sendMessage(
+          data.chatId,
+          t('workspaceSwitched', { project: wsName }),
+          { parse_mode: 'Markdown' }
+        );
+
+        if (data.targetTaskId) {
+          await this.invokeZooCodeShowTask(data.targetTaskId);
+          this.rootTaskId = data.targetTaskId;
+        }
+
+        if (data.intent === 'show_project_chats') {
+          const wsPath = this.getWorkspacePath();
+          await this.showProjectChats(
+            data.chatId,
+            wsPath,
+            data.previousWorkspace || null,
+            data.previousTaskId || null
+          );
+        }
+      }
+      return true;
+    } catch (err) {
+      this.log(`Error processing session handover: ${err.message}`);
+      return false;
+    }
   }
 
   // --- Zoo Code Integration & Event Relay ---
@@ -1816,27 +2740,57 @@ class TelegramBridgeController {
         }
         const api = zooExt.exports;
 
-        // Try direct API methods
-        if (typeof api?.sendMessage === 'function') {
-          this.trackTelegramPrompt(text);
-          await api.sendMessage(text);
-          await this.telegramClient.sendMessage(chatId, t('messageForwarded'));
-          return;
-        } else if (typeof api?.startNewTask === 'function') {
-          this.trackTelegramPrompt(text);
-          await api.startNewTask(text);
-          await this.telegramClient.sendMessage(chatId, t('taskStarted'));
-          return;
-        } else if (typeof api?.controller?.sendMessage === 'function') {
-          this.trackTelegramPrompt(text);
-          await api.controller.sendMessage(text);
-          await this.telegramClient.sendMessage(chatId, t('messageForwarded'));
-          return;
-        } else if (typeof api?.controller?.startNewTask === 'function') {
-          this.trackTelegramPrompt(text);
-          await api.controller.startNewTask(text);
-          await this.telegramClient.sendMessage(chatId, t('taskStarted'));
-          return;
+        const currentTask = api?.sidebarProvider?.getCurrentTask?.() ||
+                            api?.sidebarProvider?.cline ||
+                            api?.controller?.cline ||
+                            null;
+        const hasExistingChat = Boolean(this.rootTaskId || currentTask);
+
+        // If user selected a specific chat (rootTaskId), ensure it is active in Zoo Code
+        if (this.rootTaskId && (!currentTask || currentTask.taskId !== this.rootTaskId)) {
+          this.log(`Ensuring selected chat ${this.rootTaskId} is active in Zoo Code before forwarding prompt`);
+          await this.invokeZooCodeShowTask(this.rootTaskId);
+        }
+
+        if (hasExistingChat) {
+          // Continue in existing chat via sendMessage; NEVER start a new task
+          if (typeof api?.sendMessage === 'function') {
+            this.trackTelegramPrompt(text);
+            await api.sendMessage(text);
+            await this.telegramClient.sendMessage(chatId, t('messageForwarded'));
+            return;
+          } else if (typeof api?.controller?.sendMessage === 'function') {
+            this.trackTelegramPrompt(text);
+            await api.controller.sendMessage(text);
+            await this.telegramClient.sendMessage(chatId, t('messageForwarded'));
+            return;
+          } else if (typeof api?.sidebarProvider?.postMessageToWebview === 'function') {
+            this.trackTelegramPrompt(text);
+            await api.sidebarProvider.postMessageToWebview({
+              type: 'invoke',
+              invoke: 'sendMessage',
+              text: text
+            });
+            await this.telegramClient.sendMessage(chatId, t('messageForwarded'));
+            return;
+          }
+        } else {
+          // No chat selected and no active task; start a new task
+          if (typeof api?.startNewTask === 'function') {
+            this.trackTelegramPrompt(text);
+            try {
+              await api.startNewTask({ text: text });
+            } catch (e) {
+              await api.startNewTask(text);
+            }
+            await this.telegramClient.sendMessage(chatId, t('taskStarted'));
+            return;
+          } else if (typeof api?.controller?.startNewTask === 'function') {
+            this.trackTelegramPrompt(text);
+            await api.controller.startNewTask(text);
+            await this.telegramClient.sendMessage(chatId, t('taskStarted'));
+            return;
+          }
         }
       }
 
@@ -1856,7 +2810,7 @@ class TelegramBridgeController {
 // Extension Activation (STRICT DEFAULT-OFF)
 let controller = null;
 
-function activate(context) {
+async function activate(context) {
   controller = new TelegramBridgeController(context);
   controller.init();
 
@@ -1878,6 +2832,11 @@ function activate(context) {
 
   context.subscriptions.push(controller.statusBarItem);
   context.subscriptions.push(controller.outputChannel);
+
+  // Check ephemeral active session handover
+  await controller.checkSessionHandover().catch((err) => {
+    controller.log(`Handover check error: ${err.message}`);
+  });
 }
 
 function deactivate() {
@@ -1895,5 +2854,13 @@ module.exports = {
   t,
   TelegramBridgeController,
   TelegramClient,
-  BridgeState
+  BridgeState,
+  getWorkdirsRoot,
+  scanProjects,
+  getZooTasksForProject,
+  saveSessionHandover,
+  readSessionHandover,
+  clearSessionHandover,
+  SESSION_HANDOVER_PATH,
+  formatTaskTimestamp
 };

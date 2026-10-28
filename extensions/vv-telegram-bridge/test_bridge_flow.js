@@ -4,6 +4,7 @@ const EventEmitter = require('events');
 // Load extension module with mocked vscode
 const moduleExports = {};
 const warningMessages = [];
+const executedCommands = [];
 let lastCreatedStatusBarItem = null;
 
 const mockVscode = {
@@ -38,15 +39,24 @@ const mockVscode = {
       get: () => undefined,
       update: () => Promise.resolve()
     }),
-    workspaceFolders: [{ name: 'test-workspace' }],
+    workspaceFolders: [{ name: 'test-workspace', uri: { fsPath: '/mock/workspace' } }],
     onDidChangeConfiguration: () => ({ dispose: () => {} })
   },
   commands: {
     registerCommand: () => ({ dispose: () => {} }),
-    executeCommand: () => Promise.resolve()
+    executeCommand: (cmd, ...args) => {
+      executedCommands.push({ cmd, args });
+      return Promise.resolve();
+    }
   },
   extensions: {
     getExtension: () => null
+  },
+  Uri: {
+    file: (p) => ({ fsPath: p })
+  },
+  ThemeColor: function(id) {
+    this.id = id;
   }
 };
 
@@ -87,6 +97,11 @@ bridge.telegramClient = {
     editMarkupCalls.push({ chatId, msgId, markup });
     console.log(`[MOCK_TG_EDIT_MARKUP] msgId=${msgId}`, JSON.stringify(markup));
     return { ok: true };
+  },
+  editMessageText: async (chatId, msgId, text, extra = {}) => {
+    sentMessages.push({ chatId, text, options: extra, editedMessageId: msgId });
+    console.log(`[MOCK_TG_EDIT_TEXT] msgId=${msgId}:`, text.substring(0, 80));
+    return { ok: true, result: { message_id: msgId } };
   }
 };
 
@@ -1146,5 +1161,712 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     process.exit(1);
   }
 
-  console.log('\nALL 28 SIMULATION TESTS PASSED SUCCESSFULLY!');
+  console.log('\nALL 28 BASELINE SIMULATION TESTS PASSED SUCCESSFULLY!');
+
+  // --- Test 29: Scansione Progetti e Caricamento Task Zoo Code ---
+  console.log('\n--- Test 29: Scansione Progetti e Caricamento Task Zoo Code ---');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  const testWorkdirsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vv-test-workdirs-'));
+  const testTasksRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vv-test-tasks-'));
+  let scannedProjects = [];
+
+  try {
+    // 29a: Creazione progetti e cartelle escluse
+    const projAlpha = path.join(testWorkdirsRoot, 'proj-alpha');
+    const projBeta = path.join(testWorkdirsRoot, 'proj-beta');
+    const ignoredModules = path.join(testWorkdirsRoot, 'node_modules');
+    const hiddenDir = path.join(testWorkdirsRoot, '.hidden-dir');
+    const regularFile = path.join(testWorkdirsRoot, 'ignore_me.txt');
+
+    fs.mkdirSync(projAlpha, { recursive: true });
+    fs.mkdirSync(projBeta, { recursive: true });
+    fs.mkdirSync(ignoredModules, { recursive: true });
+    fs.mkdirSync(hiddenDir, { recursive: true });
+    fs.writeFileSync(regularFile, 'not a directory');
+
+    scannedProjects = bridgeExt.scanProjects(testWorkdirsRoot);
+    if (scannedProjects.length === 2 && scannedProjects[0].name === 'proj-alpha' && scannedProjects[1].name === 'proj-beta') {
+      console.log('Test 29a PASSED: scanProjects correctly filtered directories and excluded ignored folders');
+    } else {
+      console.error('Test 29a FAILED: unexpected scanProjects result:', scannedProjects);
+      process.exit(1);
+    }
+
+    // 29b: Creazione task Zoo Code
+    // Task 1 per proj-alpha (più vecchio)
+    const task1Dir = path.join(testTasksRoot, 'task-001');
+    fs.mkdirSync(task1Dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(task1Dir, 'history_item.json'),
+      JSON.stringify({
+        id: 'task-001',
+        ts: 1700000001000,
+        task: 'Primo prompt utente per alpha',
+        workspace: projAlpha
+      })
+    );
+
+    // Task 2 per proj-alpha (più recente)
+    const task2Dir = path.join(testTasksRoot, 'task-002');
+    fs.mkdirSync(task2Dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(task2Dir, 'history_item.json'),
+      JSON.stringify({
+        id: 'task-002',
+        ts: 1700000002000,
+        task: 'Secondo prompt utente per alpha',
+        workspace: projAlpha
+      })
+    );
+
+    // Task 3: subtask di task-002 per proj-alpha (deve essere ESCLUSO perché ha parentTaskId)
+    const task3Dir = path.join(testTasksRoot, 'task-003');
+    fs.mkdirSync(task3Dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(task3Dir, 'history_item.json'),
+      JSON.stringify({
+        id: 'task-003',
+        ts: 1700000003000,
+        task: 'Subtask di delega interna',
+        workspace: projAlpha,
+        parentTaskId: 'task-002'
+      })
+    );
+
+    // Task 4: per proj-beta (deve essere ESCLUSO quando si interroga proj-alpha)
+    const task4Dir = path.join(testTasksRoot, 'task-004');
+    fs.mkdirSync(task4Dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(task4Dir, 'history_item.json'),
+      JSON.stringify({
+        id: 'task-004',
+        ts: 1700000004000,
+        task: 'Prompt per beta',
+        workspace: projBeta
+      })
+    );
+
+    const alphaTasks = await bridgeExt.getZooTasksForProject(projAlpha, testTasksRoot);
+    if (
+      alphaTasks.length === 2 &&
+      alphaTasks[0].id === 'task-002' &&
+      alphaTasks[1].id === 'task-001'
+    ) {
+      console.log('Test 29b PASSED: getZooTasksForProject correctly retrieved and sorted user tasks, filtering subtasks');
+    } else {
+      console.error('Test 29b FAILED: unexpected tasks result:', alphaTasks);
+      process.exit(1);
+    }
+  } finally {
+    try { fs.rmSync(testWorkdirsRoot, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(testTasksRoot, { recursive: true, force: true }); } catch (e) {}
+  }
+
+  // --- Test 30: Generazione markup bottoni /projects e gestione navigazione ---
+  console.log('\n--- Test 30: Generazione markup bottoni /projects e gestione navigazione ---');
+  const navWorkdirs = fs.mkdtempSync(path.join(os.tmpdir(), 'vv-nav-workdirs-'));
+  const navTasks = fs.mkdtempSync(path.join(os.tmpdir(), 'vv-nav-tasks-'));
+  const customHandover = path.join(os.tmpdir(), '.vv_test_session_handover');
+  process.env.VV_TELEGRAM_HANDOVER_PATH = customHandover;
+  let navBridge = null;
+  let nextHostBridge = null;
+
+  try {
+    const projCurr = path.join(navWorkdirs, 'project-current');
+    const projOther = path.join(navWorkdirs, 'project-other');
+    fs.mkdirSync(projCurr, { recursive: true });
+    fs.mkdirSync(projOther, { recursive: true });
+
+    // Task esistente in project-current
+    const tCurrDir = path.join(navTasks, 'task-curr-1');
+    fs.mkdirSync(tCurrDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tCurrDir, 'history_item.json'),
+      JSON.stringify({
+        id: 'task-curr-1',
+        ts: 1710000000000,
+        task: 'Implementazione feature auth',
+        workspace: projCurr
+      })
+    );
+
+    process.env.WORKDIRS_DIR = navWorkdirs;
+    process.env.ZOO_TASKS_DIR = navTasks;
+    mockVscode.workspace.workspaceFolders = [{
+      name: 'project-current',
+      uri: { fsPath: projCurr }
+    }];
+
+    navBridge = new bridgeExt.TelegramBridgeController({ subscriptions: [] });
+    navBridge.telegramClient = {
+      sendMessage: (chatId, text, options) => {
+        sentMessages.push({ chatId, text, options });
+        return Promise.resolve({ ok: true, result: { message_id: 200 } });
+      },
+      answerCallbackQuery: (cbId, text) => {
+        return Promise.resolve({ ok: true });
+      },
+      editMessageReplyMarkup: (chatId, msgId, replyMarkup) => {
+        return Promise.resolve({ ok: true });
+      },
+      editMessageText: (chatId, msgId, text, options) => {
+        sentMessages.push({ chatId, text, options, editedMessageId: msgId });
+        return Promise.resolve({ ok: true, result: { message_id: msgId } });
+      },
+      getMe: () => Promise.resolve({ id: 123456, username: 'test_bot', first_name: 'Test' }),
+      getUpdates: (offset, timeout, signal) => new Promise((res) => {
+        if (signal) {
+          signal.addEventListener('abort', () => res([]));
+        }
+      })
+    };
+    navBridge.botInfo = { id: 123456, username: 'test_bot', first_name: 'Test' };
+    navBridge.allowedUserId = '999888777';
+    navBridge.state = bridgeExt.BridgeState.ACTIVE;
+
+    // 30a: Comando /projects in italiano
+    process.env.AI_LANG = 'it';
+    sentMessages.length = 0;
+    await navBridge.handleMessage({
+      text: '/projects',
+      from: { id: 999888777 },
+      chat: { id: 999888777 }
+    });
+
+    const projectsMsg = sentMessages[sentMessages.length - 1];
+    const kb = projectsMsg?.options?.reply_markup?.inline_keyboard || [];
+    if (
+      projectsMsg &&
+      projectsMsg.text.includes('Progetto attuale') &&
+      projectsMsg.text.includes('project-current') &&
+      kb.length === 3 &&
+      kb[0][0].text === '📁 project-current' &&
+      kb[0][0].callback_data === 'proj:0' &&
+      kb[1][0].text === '📁 project-other' &&
+      kb[1][0].callback_data === 'proj:1' &&
+      kb[2][0].text === '⬅️ Indietro' &&
+      kb[2][0].callback_data === 'nav:back'
+    ) {
+      console.log('Test 30a PASSED: /projects correctly remembered current active project at top');
+    } else {
+      console.error('Test 30a FAILED: unexpected /projects message:', projectsMsg, kb);
+      process.exit(1);
+    }
+
+    // 30b: Selezione dello stesso progetto corrente (proj:0) -> mostra chat storiche
+    sentMessages.length = 0;
+    await navBridge.handleCallbackQuery({
+      id: 'cb_p0',
+      data: 'proj:0',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+
+    const chatsMsg = sentMessages[sentMessages.length - 1];
+    const chatKb = chatsMsg?.options?.reply_markup?.inline_keyboard || [];
+    if (
+      chatsMsg &&
+      chatsMsg.text.includes('project-current') &&
+      chatKb.length >= 3 &&
+      chatKb[0][0].callback_data === 'chat:task-curr-1' &&
+      chatKb[1][0].callback_data === 'chat:new' &&
+      chatKb[2][0].callback_data === 'nav:back'
+    ) {
+      console.log('Test 30b PASSED: proj:0 on current workspace immediately displayed chats menu');
+    } else {
+      console.error('Test 30b FAILED: unexpected chats menu:', chatsMsg, chatKb);
+      process.exit(1);
+    }
+
+    // 30c: Selezione di una chat esistente (chat:task-curr-1)
+    sentMessages.length = 0;
+    await navBridge.handleCallbackQuery({
+      id: 'cb_c1',
+      data: 'chat:task-curr-1',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+
+    const selectChatMsg = sentMessages[sentMessages.length - 1]?.text || '';
+    if (
+      navBridge.rootTaskId === 'task-curr-1' &&
+      selectChatMsg.includes('Chat attiva impostata su')
+    ) {
+      console.log('Test 30c PASSED: existing chat selected and rootTaskId updated');
+    } else {
+      console.error('Test 30c FAILED: chat selection failed:', selectChatMsg, navBridge.rootTaskId);
+      process.exit(1);
+    }
+
+    // 30d: Creazione nuova chat (chat:new)
+    sentMessages.length = 0;
+    await navBridge.handleCallbackQuery({
+      id: 'cb_cnew',
+      data: 'chat:new',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+
+    const newChatMsg = sentMessages[sentMessages.length - 1]?.text || '';
+    if (
+      navBridge.rootTaskId === null &&
+      newChatMsg.includes('Nuova chat avviata')
+    ) {
+      console.log('Test 30d PASSED: chat:new cleared active task and notified user');
+    } else {
+      console.error('Test 30d FAILED: chat:new failed:', newChatMsg);
+      process.exit(1);
+    }
+
+    // 30e: nav:back da livello lista progetti -> chiude/annulla menu
+    navBridge.navigationState.set(999888777, { step: 'projects', projects: scannedProjects });
+    sentMessages.length = 0;
+    await navBridge.handleCallbackQuery({
+      id: 'cb_back_root',
+      data: 'nav:back',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+
+    const cancelMsg = sentMessages[sentMessages.length - 1]?.text || '';
+    if (cancelMsg.includes('Operazione annullata') && !navBridge.navigationState.has(999888777)) {
+      console.log('Test 30e PASSED: nav:back at projects level cleanly cancelled navigation with "Operazione annullata"');
+    } else {
+      console.error('Test 30e FAILED: nav:back cancel failed:', cancelMsg);
+      process.exit(1);
+    }
+
+    // --- Test 31: Handover Effimero di Sessione per Switch Workspace ---
+    console.log('\n--- Test 31: Handover Effimero di Sessione per Switch Workspace ---');
+    executedCommands.length = 0;
+    sentMessages.length = 0;
+    bridgeExt.clearSessionHandover();
+
+    // 31a: Selezione di un progetto differente (proj:1 -> project-other)
+    await navBridge.handleCallbackQuery({
+      id: 'cb_p1',
+      data: 'proj:1',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+
+    const switchMsg = sentMessages[sentMessages.length - 1]?.text || '';
+    const handoverData = bridgeExt.readSessionHandover();
+    const openFolderCall = executedCommands.find(c => c.cmd === 'vscode.openFolder');
+
+    if (
+      switchMsg.includes('Cambio workspace in corso verso `project-other`') &&
+      handoverData &&
+      handoverData.data.chatId === 999888777 &&
+      handoverData.data.intent === 'show_project_chats' &&
+      openFolderCall &&
+      openFolderCall.args[0].fsPath === projOther
+    ) {
+      console.log('Test 31a PASSED: Workspace switch correctly created ephemeral handover and invoked openFolder');
+    } else {
+      console.error('Test 31a FAILED: switch workspace handover failed:', switchMsg, handoverData, openFolderCall);
+      process.exit(1);
+    }
+
+    // 31b: Ripristino handover al boot del nuovo host (checkSessionHandover)
+    // Simuliamo che il nuovo host si avvii in project-other
+    mockVscode.workspace.workspaceFolders = [{
+      name: 'project-other',
+      uri: { fsPath: projOther }
+    }];
+
+    nextHostBridge = new bridgeExt.TelegramBridgeController({ subscriptions: [] });
+    nextHostBridge.init();
+    nextHostBridge.telegramClient = navBridge.telegramClient;
+    nextHostBridge.botInfo = { id: 123456, username: 'test_bot', first_name: 'Test' };
+    nextHostBridge.allowedUserId = '999888777';
+    nextHostBridge.state = bridgeExt.BridgeState.INACTIVE;
+
+    sentMessages.length = 0;
+    const restored = await nextHostBridge.checkSessionHandover();
+    const afterHandover = bridgeExt.readSessionHandover();
+
+    if (
+      restored === true &&
+      nextHostBridge.state === bridgeExt.BridgeState.ACTIVE &&
+      afterHandover === null &&
+      sentMessages.some(m => m.text.includes('Passaggio al workspace `project-other` completato'))
+    ) {
+      console.log('Test 31b PASSED: checkSessionHandover consumed handover file, reconnected bridge and notified user');
+    } else {
+      console.error('Test 31b FAILED: session restore failed:', restored, nextHostBridge.state, afterHandover, sentMessages);
+      process.exit(1);
+    }
+
+    // 31c: Rollback tramite nav:back su workspace commutato
+    executedCommands.length = 0;
+    sentMessages.length = 0;
+    await nextHostBridge.handleCallbackQuery({
+      id: 'cb_rollback',
+      data: 'nav:back',
+      from: { id: 999888777 },
+      message: { message_id: 201, chat: { id: 999888777 } }
+    });
+
+    const rollbackCall = executedCommands.find(c => c.cmd === 'vscode.openFolder');
+    if (rollbackCall && rollbackCall.args[0].fsPath === projCurr) {
+      console.log('Test 31c PASSED: nav:back successfully performed rollback to previous workspace');
+    } else {
+      console.error('Test 31c FAILED: rollback failed:', rollbackCall);
+      process.exit(1);
+    }
+
+    // 31d: Verifica scadenza handover (> 60s)
+    const expiredHandoverPath = path.join(os.tmpdir(), '.vv_test_expired_handover');
+    bridgeExt.saveSessionHandover({
+      timestamp: Date.now() - 70000,
+      chatId: 999888777,
+      intent: 'show_project_chats'
+    }, expiredHandoverPath);
+
+    const expiredResult = bridgeExt.readSessionHandover(expiredHandoverPath, 60000);
+    if (expiredResult === null && !fs.existsSync(expiredHandoverPath)) {
+      console.log('Test 31d PASSED: Expired handover (>60s) correctly ignored and removed');
+    } else {
+      console.error('Test 31d FAILED: expired handover handling failed:', expiredResult);
+      process.exit(1);
+    }
+
+    // --- Test 32: Verifica Fix Zoo Code Integration & Anti-Duplicazione ---
+    console.log('\n--- Test 32: Verifica Fix Zoo Code Integration & Anti-Duplicazione ---');
+
+    // 32a: Promemoria progetto attivo e annullamento in inglese
+    process.env.AI_LANG = 'en';
+    sentMessages.length = 0;
+    await navBridge.handleMessage({
+      text: '/projects',
+      from: { id: 999888777 },
+      chat: { id: 999888777 }
+    });
+    const enProjMsg = sentMessages[sentMessages.length - 1];
+    if (enProjMsg && enProjMsg.text.includes('Current project:') && enProjMsg.text.includes(navBridge.getWorkspaceName())) {
+      console.log('Test 32a PASSED: English /projects includes "Current project:" reminder');
+    } else {
+      console.error('Test 32a FAILED: expected "Current project:" in English /projects', enProjMsg);
+      process.exit(1);
+    }
+
+    // Verifica annullamento in inglese
+    sentMessages.length = 0;
+    await navBridge.handleCallbackQuery({
+      id: 'cb_en_back',
+      data: 'nav:back',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+    const enCancelMsg = sentMessages[sentMessages.length - 1]?.text || '';
+    if (enCancelMsg.includes('Operation cancelled.')) {
+      console.log('Test 32a.2 PASSED: English cancellation says "Operation cancelled."');
+    } else {
+      console.error('Test 32a.2 FAILED: expected "Operation cancelled."', enCancelMsg);
+      process.exit(1);
+    }
+
+    // 32b: Deduplicazione callback query
+    sentMessages.length = 0;
+    const initialProcessedCount = navBridge.processedCallbackIds.size;
+    await navBridge.handleCallbackQuery({
+      id: 'cb_dedup_test',
+      data: 'chat:new',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+    const messagesAfterFirst = sentMessages.length;
+    // Invia di nuovo con lo stesso ID callback query (simulazione ritrasmissione o doppio click)
+    await navBridge.handleCallbackQuery({
+      id: 'cb_dedup_test',
+      data: 'chat:new',
+      from: { id: 999888777 },
+      message: { message_id: 200, chat: { id: 999888777 } }
+    });
+    if (sentMessages.length === messagesAfterFirst) {
+      console.log('Test 32b PASSED: Duplicate callback query with same id was cleanly ignored without double sending');
+    } else {
+      console.error('Test 32b FAILED: duplicate callback query produced duplicate message');
+      process.exit(1);
+    }
+
+    // 32c: Test invokeZooCodeShowTask con resumeTask e showTaskWithId
+    let resumeTaskCalledWith = null;
+    let sidebarShowTaskCalledWith = null;
+    let focusCommandCalled = false;
+    let mockZooApi = {
+      resumeTask: async (taskId) => {
+        resumeTaskCalledWith = taskId;
+      },
+      sidebarProvider: {
+        showTaskWithId: async (taskId) => {
+          sidebarShowTaskCalledWith = taskId;
+        },
+        getCurrentTask: () => null
+      }
+    };
+    mockVscode.extensions.getExtension = (id) => {
+      if (id.toLowerCase().includes('zoo')) {
+        return {
+          isActive: true,
+          exports: mockZooApi
+        };
+      }
+      return null;
+    };
+
+    const resumeResult = await navBridge.invokeZooCodeShowTask('task-curr-1');
+    if (resumeResult && resumeTaskCalledWith === 'task-curr-1') {
+      console.log('Test 32c PASSED: invokeZooCodeShowTask invoked api.resumeTask("task-curr-1")');
+    } else {
+      console.error('Test 32c FAILED: resumeTask not called:', resumeResult, resumeTaskCalledWith);
+      process.exit(1);
+    }
+
+    // Fallback: se resumeTask non esiste ma c'è sidebarProvider.showTaskWithId
+    delete mockZooApi.resumeTask;
+    const sidebarResult = await navBridge.invokeZooCodeShowTask('task-curr-1');
+    if (sidebarResult && sidebarShowTaskCalledWith === 'task-curr-1') {
+      console.log('Test 32c.2 PASSED: fallback invokeZooCodeShowTask invoked api.sidebarProvider.showTaskWithId');
+    } else {
+      console.error('Test 32c.2 FAILED: sidebarProvider.showTaskWithId not called');
+      process.exit(1);
+    }
+
+    // 32d: forwardMessageToZooCode prosegue nella chat esistente senza avviare un nuovo task
+    let sentMessageCalledWith = null;
+    let startNewTaskCalled = false;
+    mockZooApi.sendMessage = async (text) => {
+      sentMessageCalledWith = text;
+    };
+    mockZooApi.startNewTask = async (opts) => {
+      startNewTaskCalled = true;
+    };
+
+    navBridge.rootTaskId = 'task-curr-1';
+    sentMessages.length = 0;
+    await navBridge.forwardMessageToZooCode('Aggiungi un test unitario', 999888777);
+
+    if (sentMessageCalledWith === 'Aggiungi un test unitario' && !startNewTaskCalled) {
+      console.log('Test 32d PASSED: When chat is active, forwardMessageToZooCode uses api.sendMessage and NEVER calls startNewTask');
+    } else {
+      console.error('Test 32d FAILED: sendMessage not called or startNewTask invoked:', { sentMessageCalledWith, startNewTaskCalled });
+      process.exit(1);
+    }
+
+    // 32e: forwardMessageToZooCode avvia un nuovo task SOLO se non c'è una chat attiva
+    navBridge.rootTaskId = null;
+    mockZooApi.sidebarProvider.getCurrentTask = () => null;
+    sentMessageCalledWith = null;
+    startNewTaskCalled = false;
+    let newTaskArg = null;
+    mockZooApi.startNewTask = async (opts) => {
+      startNewTaskCalled = true;
+      newTaskArg = opts;
+    };
+
+    sentMessages.length = 0;
+    await navBridge.forwardMessageToZooCode('Nuova attività da zero', 999888777);
+
+    if (startNewTaskCalled && (newTaskArg?.text === 'Nuova attività da zero' || newTaskArg === 'Nuova attività da zero')) {
+      console.log('Test 32e PASSED: When no chat is active, forwardMessageToZooCode correctly calls api.startNewTask');
+    } else {
+      console.error('Test 32e FAILED: startNewTask not called when no chat is active');
+      process.exit(1);
+    }
+
+  } finally {
+    if (navBridge) {
+      await navBridge.stop(false);
+    }
+    if (typeof nextHostBridge !== 'undefined' && nextHostBridge) {
+      await nextHostBridge.stop(false);
+    }
+    try { fs.rmSync(navWorkdirs, { recursive: true, force: true }); } catch (e) {}
+    try { fs.rmSync(navTasks, { recursive: true, force: true }); } catch (e) {}
+    bridgeExt.clearSessionHandover();
+  }
+
+  // --- Test 33: Safe /stop confirmation flow ---
+  console.log('\n--- Test 33: Safe /stop confirmation flow ---');
+  const stopBridge = new bridgeExt.TelegramBridgeController({ subscriptions: [] });
+  stopBridge.init();
+  stopBridge.allowedUserId = '999888777';
+  stopBridge.state = 'ACTIVE';
+
+  const stopSentMessages = [];
+  const stopAnsweredCallbacks = [];
+  stopBridge.telegramClient = {
+    sendMessage: async (chatId, text, extra = {}) => {
+      stopSentMessages.push({ chatId, text, extra });
+      return { ok: true, result: { message_id: 9999 } };
+    },
+    answerCallbackQuery: async (id, text) => {
+      stopAnsweredCallbacks.push({ id, text });
+      return { ok: true };
+    },
+    editMessageReplyMarkup: async (chatId, msgId, markup) => {
+      return { ok: true };
+    }
+  };
+
+  // 1. Invio comando /stop: non spegne il bot ma invia i bottoni di conferma
+  await stopBridge.handleMessage({
+    from: { id: 999888777 },
+    chat: { id: 999888777 },
+    text: '/stop'
+  });
+
+  if (stopBridge.state !== 'ACTIVE') {
+    console.error('Test 33 FAILED: /stop immediately deactivated bridge before confirmation');
+    process.exit(1);
+  }
+
+  const promptMsg = stopSentMessages.find(m =>
+    m.extra?.reply_markup?.inline_keyboard?.some(row =>
+      row.some(btn => btn.callback_data === 'stop:confirm')
+    )
+  );
+
+  if (!promptMsg) {
+    console.error('Test 33 FAILED: /stop did not send confirmation prompt with stop:confirm button', stopSentMessages);
+    process.exit(1);
+  }
+
+  const buttons = promptMsg.extra.reply_markup.inline_keyboard[0];
+  const confirmBtn = buttons.find(b => b.callback_data === 'stop:confirm');
+  const cancelBtn = buttons.find(b => b.callback_data === 'stop:cancel');
+
+  if (!confirmBtn || !cancelBtn) {
+    console.error('Test 33 FAILED: missing confirm or cancel button in prompt', buttons);
+    process.exit(1);
+  }
+  console.log('Test 33a PASSED: /stop keeps bridge ACTIVE and sends confirmation prompt with inline buttons');
+
+  // 2. Click su stop:cancel: mantiene attivo il bot e mostra il messaggio di annullamento
+  stopSentMessages.length = 0;
+  await stopBridge.handleCallbackQuery({
+    id: 'cb_stop_cancel',
+    from: { id: 999888777 },
+    message: { chat: { id: 999888777 }, message_id: 9999 },
+    data: 'stop:cancel'
+  });
+
+  if (stopBridge.state !== 'ACTIVE') {
+    console.error('Test 33 FAILED: stop:cancel deactivated bridge');
+    process.exit(1);
+  }
+
+  const cancelNotice = stopSentMessages.find(m => (m.text && m.text.includes('annullata')) || (m.text && m.text.includes('cancelled')));
+  if (!cancelNotice) {
+    console.error('Test 33 FAILED: stop:cancel did not send cancellation notice', stopSentMessages);
+    process.exit(1);
+  }
+  console.log('Test 33b PASSED: stop:cancel keeps bridge ACTIVE and sends cancellation message');
+
+  // 3. Click su stop:confirm: arresta il bot
+  stopSentMessages.length = 0;
+  await stopBridge.handleCallbackQuery({
+    id: 'cb_stop_confirm',
+    from: { id: 999888777 },
+    message: { chat: { id: 999888777 }, message_id: 9999 },
+    data: 'stop:confirm'
+  });
+
+  if (stopBridge.state !== 'INACTIVE') {
+    console.error(`Test 33 FAILED: stop:confirm did not set bridge state to INACTIVE (state=${stopBridge.state})`);
+    process.exit(1);
+  }
+  console.log('Test 33c PASSED: stop:confirm successfully stops the bridge');
+
+  // --- Test 34: 100% i18n Key Parity & Multi-Language Coverage (en, it, es, fr, de) ---
+  console.log('\n--- Test 34: 100% i18n key parity and language resolution ---');
+  const targetLangs = ['en', 'it', 'es', 'fr', 'de'];
+  const refKeys = Object.keys(bridgeExt.MESSAGES.en);
+  const dummyParams = {
+    workspace: 'test-ws',
+    host: 'test-host',
+    bot: 'test-bot',
+    date: '2026-10-28 17:00:00',
+    current: 'current-project',
+    project: 'target-project',
+    title: 'Test Session',
+    profile: 'Code',
+    error: 'Test Error',
+    toolName: 'execute_command',
+    description: 'Execute npm run test',
+    text: 'Test message text',
+    activityStatus: 'Idle',
+    zooStatus: 'Active'
+  };
+
+  for (const lang of targetLangs) {
+    if (!bridgeExt.MESSAGES[lang]) {
+      console.error(`Test 34 FAILED: Language '${lang}' is missing from MESSAGES`);
+      process.exit(1);
+    }
+
+    const currentKeys = Object.keys(bridgeExt.MESSAGES[lang]);
+    const missingKeys = refKeys.filter((k) => !(k in bridgeExt.MESSAGES[lang]));
+    const extraKeys = currentKeys.filter((k) => !refKeys.includes(k));
+
+    if (missingKeys.length > 0) {
+      console.error(`Test 34 FAILED: Language '${lang}' is missing keys:`, missingKeys);
+      process.exit(1);
+    }
+    if (extraKeys.length > 0) {
+      console.error(`Test 34 FAILED: Language '${lang}' has unexpected extra keys:`, extraKeys);
+      process.exit(1);
+    }
+
+    for (const key of refKeys) {
+      const val = bridgeExt.MESSAGES[lang][key];
+      if (val === undefined || val === null) {
+        console.error(`Test 34 FAILED: Key '${key}' in '${lang}' is undefined or null`);
+        process.exit(1);
+      }
+      if (typeof val === 'function') {
+        const rendered = val(dummyParams);
+        if (typeof rendered !== 'string' || rendered.trim().length === 0) {
+          console.error(`Test 34 FAILED: Function key '${key}' in '${lang}' rendered empty or non-string output`);
+          process.exit(1);
+        }
+      } else if (typeof val === 'string') {
+        if (val.trim().length === 0) {
+          console.error(`Test 34 FAILED: String key '${key}' in '${lang}' is empty`);
+          process.exit(1);
+        }
+      } else {
+        console.error(`Test 34 FAILED: Key '${key}' in '${lang}' has invalid type: ${typeof val}`);
+        process.exit(1);
+      }
+    }
+  }
+
+  // Verify resolveAiLang with comprehensive variations and aliases
+  const langTestCases = [
+    ['it', 'it'], ['it-IT', 'it'], ['it_IT', 'it'], ['italiano', 'it'], ['italian', 'it'], ['ITALIANO', 'it'],
+    ['es', 'es'], ['es-ES', 'es'], ['es-419', 'es'], ['es_MX', 'es'], ['spagnolo', 'es'], ['spanish', 'es'], ['español', 'es'], ['ESPAÑOL', 'es'],
+    ['fr', 'fr'], ['fr-FR', 'fr'], ['fr_CA', 'fr'], ['francese', 'fr'], ['french', 'fr'], ['français', 'fr'], ['FRANÇAIS', 'fr'],
+    ['de', 'de'], ['de-DE', 'de'], ['de_AT', 'de'], ['tedesco', 'de'], ['german', 'de'], ['deutsch', 'de'], ['DEUTSCH', 'de'],
+    ['en', 'en'], ['en-US', 'en'], ['english', 'en'], ['unknown-lang', 'en'], ['', 'en'], [undefined, 'en']
+  ];
+
+  for (const [input, expected] of langTestCases) {
+    const resolved = bridgeExt.resolveAiLang(input);
+    if (resolved !== expected) {
+      console.error(`Test 34 FAILED: resolveAiLang('${input}') expected '${expected}', got '${resolved}'`);
+      process.exit(1);
+    }
+  }
+
+  console.log(`Test 34 PASSED: 100% key parity across all 5 languages (${refKeys.length} keys each) and resolveAiLang normalized correctly.`);
+
+  console.log('\n========================================');
+  console.log('ALL 34 SIMULATION TESTS PASSED SUCCESSFULLY!');
+  console.log('========================================');
 })();
