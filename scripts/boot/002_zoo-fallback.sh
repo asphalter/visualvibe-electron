@@ -10,7 +10,7 @@ fi
 
 vv_init_strict
 
-ZOO_VERSION="${ZOO_VERSION:-3.92.0}"
+ZOO_VERSION="${ZOO_VERSION:-3.94.0}"
 ZOO_EXT_ID="zoocodeorganization.zoo-code"
 EXT_DIR="$VSCODIUM_EXTENSIONS"
 mkdir -p "$EXT_DIR"

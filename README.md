@@ -60,7 +60,7 @@ Your editors, background compilers, shells, and AI coding agents execute indepen
 | **Virtual Display & Windowing** | Xvfb (`:1`) & Openbox | Lightweight headless X11 display and kiosk window management |
 | **Remote Desktop Streaming** | KasmVNC 1.3.3 | Low-latency WebP/JPEG video streaming over WebSockets |
 | **Editor & IDE** | VSCodium | Native open-source desktop code editor |
-| **AI Agent Runtime** | Zoo Code 3.92.0 | Built-in autonomous pair-programming assistant with persistent profiles |
+| **AI Agent Runtime** | Zoo Code 3.94.0 | Built-in autonomous pair-programming assistant with persistent profiles |
 | **Reverse Proxy & TLS** | Caddy 2 | Automatic HTTPS, HTTP redirects, and unified routing |
 | **File Manager** | FileBrowser 1.5.6 | Web-based file explorer and drag-and-drop transfer tool |
 | **Container Engine** | Podman 5+ | Nested rootless container runtime for dev tasks |
@@ -102,8 +102,8 @@ The container exposes three dedicated network ports handled by Caddy:
 
 VisualVibe comes pre-bundled with dedicated extensions and automation scripts to deliver a seamless autonomous pair-programming experience:
 
-### 1. Zoo Code 3.92.0 & Non-Destructive Profile Seeding
-- **Autonomous Pairing Assistant**: Zoo Code is pinned to version **3.92.0**, offering deep multi-mode orchestration (Code, Architect, Debug, Ask, Orchestrator).
+### 1. Zoo Code 3.94.0 & Non-Destructive Profile Seeding
+- **Autonomous Pairing Assistant**: Zoo Code is pinned to version **3.94.0**, offering deep multi-mode orchestration (Code, Architect, Debug, Ask, Orchestrator).
 - **Persistent User Profiles**: The boot seeder ([`scripts/boot/011_zoo-seed-profiles.py`](scripts/boot/011_zoo-seed-profiles.py)) performs a non-destructive merge into VSCodium's `SecretStorage`. It configures standard `visualvibe-*` system profiles from `AI_API_URL` and `AI_API_KEY` while strictly preserving custom user profiles, mode mappings, and custom agent settings across container restarts.
 
 ### 2. VisualVibe Telegram Bridge (`vv-telegram-bridge`)

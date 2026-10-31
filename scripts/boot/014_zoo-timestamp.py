@@ -31,7 +31,7 @@ sys.path.insert(0, "/opt/visualvibe/scripts/lib")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from vv_common import VV_USER, latest_zoo_ext_dir, PatchTracker
 
-ZOO_CODE_COMPAT_VERSION = "3.92.0"
+ZOO_CODE_COMPAT_VERSION = "3.94.0"
 MARKER_EXT_V1 = "/*[VisualVibe timestamp display v1]*/"
 MARKER_EXT = "/*[VisualVibe timestamp display v2]*/"
 MARKER_PKG = "zoo-code.showTimestamps"

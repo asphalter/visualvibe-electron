@@ -3,7 +3,7 @@ FROM almalinux:9
 # ==============================================================================
 # Component versions & configuration
 # ==============================================================================
-ARG ZOO_VERSION="3.92.0"
+ARG ZOO_VERSION="3.94.0"
 ARG KASMVNC_VERSION="1.3.3"
 ARG FILEBROWSER_VERSION="1.5.6-stable"
 ARG CADDY_COPR="@caddy/caddy"

@@ -27,11 +27,11 @@ sys.path.insert(0, "/opt/visualvibe/scripts/lib")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from vv_common import VV_HOME, HOME, zoo_lang, latest_zoo_ext_dir, PatchTracker
 
-# Tested and validated with Zoo Code version 3.92.0 (the version pinned in
+# Tested and validated with Zoo Code version 3.94.0 (the version pinned in
 # Containerfile / 002_zoo-fallback.sh).
 # When upgrading Zoo Code in Containerfile (ARG ZOO_VERSION), this constant
 # MUST be updated and all regex/replace patterns re-verified against new bundle files.
-ZOO_CODE_COMPAT_VERSION = "3.92.0"
+ZOO_CODE_COMPAT_VERSION = "3.94.0"
 
 tracker = PatchTracker("011_zoo-seed-profiles", compat_version=ZOO_CODE_COMPAT_VERSION)
 
