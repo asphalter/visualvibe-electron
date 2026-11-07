@@ -18,6 +18,8 @@ Features:
 - Patches webview-ui/build/assets/index.js:
   * Adds data-vv-ts={message.ts} to the ChatRow wrapper so each rendered row carries
     its real timestamp; the helper script reads this attribute directly.
+  * Disables native inline timestamp rendering (guard N2 bypass) introduced in Zoo Code 3.96.0+
+    to prevent visual redundancy with VisualVibe's universal header timestamp.
 - Idempotent with versioned markers and rollback on failure via .orig backups.
 """
 import sys
@@ -31,11 +33,12 @@ sys.path.insert(0, "/opt/visualvibe/scripts/lib")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from vv_common import VV_USER, latest_zoo_ext_dir, PatchTracker
 
-ZOO_CODE_COMPAT_VERSION = "3.94.0"
+ZOO_CODE_COMPAT_VERSION = "3.96.0"
 MARKER_EXT_V1 = "/*[VisualVibe timestamp display v1]*/"
 MARKER_EXT = "/*[VisualVibe timestamp display v2]*/"
 MARKER_PKG = "zoo-code.showTimestamps"
 MARKER_WEBVIEW = "data-vv-ts"
+MARKER_NATIVE_DISABLED = "/*[VisualVibe: disabled native timestamp]*/"
 
 tracker = PatchTracker("014_zoo-timestamp", compat_version=ZOO_CODE_COMPAT_VERSION)
 
@@ -338,10 +341,11 @@ def patch_extension_js(ext_dir: str) -> bool:
 
 
 def patch_webview_bundle(ext_dir: str) -> bool:
-    """Patch the built webview bundle so ChatRow rows expose data-vv-ts.
+    """Patch the built webview bundle so ChatRow rows expose data-vv-ts
+    and disable the redundant native inline timestamp in Zoo Code >= 3.96.0.
 
-    Verified against Zoo Code 3.90.0: the memoized ChatRow wrapper compiles to
-        (0,K.jsx)(`div`,{className:`px-[15px] py-[10px] pr-[6px]`,children:(0,K.jsx)(bxn,{...e})})
+    Verified against Zoo Code 3.90.0 - 3.96.0: the memoized ChatRow wrapper compiles to
+        (0,K.jsx)(`div`,{className:`px-[15px] py-[10px] pr-[6px]`,children:(0,K.jsx)(...e...)})
     where ``e`` is the props object, so ``e.message.ts`` is the real message timestamp.
     """
     bundle_js = os.path.join(ext_dir, "webview-ui", "build", "assets", "index.js")
@@ -352,14 +356,26 @@ def patch_webview_bundle(ext_dir: str) -> bool:
     with open(bundle_js, "r", encoding="utf-8", errors="replace") as f:
         s = f.read()
 
-    if MARKER_WEBVIEW in s:
-        print(f"[Init] Zoo Code webview bundle timestamp patch ({MARKER_WEBVIEW}) already applied.")
+    orig_backup = bundle_js + ".orig"
+
+    # Se entrambe le patch sono già presenti (o la disabilitazione nativa è già attiva),
+    # consideriamo il bundle già patchato.
+    if MARKER_WEBVIEW in s and MARKER_NATIVE_DISABLED in s:
+        print(f"[Init] Zoo Code webview bundle timestamp patch ({MARKER_WEBVIEW} + native disabled) already applied.")
         return True
 
-    orig_backup = bundle_js + ".orig"
+    # Se il bundle contiene solo la vecchia patch v2 (senza disabilitazione nativa),
+    # ripristiniamo da .orig per applicare in modo pulito e idempotente entrambe le patch.
+    if MARKER_WEBVIEW in s and MARKER_NATIVE_DISABLED not in s:
+        if os.path.isfile(orig_backup):
+            with open(orig_backup, "r", encoding="utf-8", errors="replace") as f:
+                s = f.read()
+            print("[Init] Upgrading webview bundle patch: restored from .orig to apply native timestamp neutralization.")
+
     if not os.path.isfile(orig_backup):
         shutil.copy2(bundle_js, orig_backup)
 
+    # 5. Iniezione attributo data-vv-ts nel wrapper ChatRow
     chatrow_re = re.compile(
         r"(\(0,[a-zA-Z0-9_$]+\.jsx\)\([`\"]div[`\"],\{className:[`\"]px-\[15px\] py-\[10px\] pr-\[6px\][`\"]),children:(\(0,[a-zA-Z0-9_$]+\.jsx\)\([a-zA-Z0-9_$]+,\{\.\.\.e\}\)\}\))"
     )
@@ -375,6 +391,30 @@ def patch_webview_bundle(ext_dir: str) -> bool:
     else:
         print("[Init] ERROR: Could not find ChatRow wrapper pattern in webview bundle")
         return False
+
+    # 6. Disabilitazione del timestamp nativo di Zoo Code (guard bypass N2)
+    # Zoo Code 3.96.0 introduce un timestamp nativo inline formattato via P2({ts, timeFormat, dateFormat})
+    # con guardia condizionale `!e.partial && N2(e.ts)`.
+    # Neutralizzando la guardia `N2` ad una funzione che restituisce sempre `false`, React
+    # bypassa completamente l'istanziazione dei nodi DOM `<div className="ml-6 mt-1">`
+    # ed evita la ridondanza visiva con la barra timestamp VisualVibe.
+    native_ts_re = re.compile(
+        r",([a-zA-Z0-9_$]+)=e=>Number\.isFinite\(e\)&&e>0&&!Number\.isNaN\(new Date\(e\)\.getTime\(\)\)"
+    )
+    if native_ts_re.search(s):
+        s = tracker.tracked_sub(
+            native_ts_re,
+            r",\1=()=>false" + MARKER_NATIVE_DISABLED,
+            s,
+            name="disable-native-timestamp",
+            critical=True,
+            count=1
+        )
+    else:
+        # Se la versione installata non include il timestamp nativo (Zoo Code < 3.96.0),
+        # non consideriamo il fallimento come bloccante e registriamo il marker per idempotenza immediata
+        print("[Init] INFO: Native timestamp guard pattern not present in webview bundle (Zoo Code < 3.96.0).")
+        s += f"\n{MARKER_NATIVE_DISABLED}\n"
 
     with open(bundle_js, "w", encoding="utf-8") as f:
         f.write(s)

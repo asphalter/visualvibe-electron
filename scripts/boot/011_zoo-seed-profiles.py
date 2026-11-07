@@ -27,11 +27,11 @@ sys.path.insert(0, "/opt/visualvibe/scripts/lib")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from vv_common import VV_HOME, HOME, zoo_lang, latest_zoo_ext_dir, PatchTracker
 
-# Tested and validated with Zoo Code version 3.94.0 (the version pinned in
+# Tested and validated with Zoo Code version 3.96.0 (the version pinned in
 # Containerfile / 002_zoo-fallback.sh).
 # When upgrading Zoo Code in Containerfile (ARG ZOO_VERSION), this constant
 # MUST be updated and all regex/replace patterns re-verified against new bundle files.
-ZOO_CODE_COMPAT_VERSION = "3.94.0"
+ZOO_CODE_COMPAT_VERSION = "3.96.0"
 
 tracker = PatchTracker("011_zoo-seed-profiles", compat_version=ZOO_CODE_COMPAT_VERSION)
 
@@ -47,7 +47,8 @@ tracker = PatchTracker("011_zoo-seed-profiles", compat_version=ZOO_CODE_COMPAT_V
 # v13 anchors strictly to the exported activate() function (no generic fallback) on Zoo Code 3.90.0.
 # v14 adds toolRepetitionLimitsMigrated:true in migrations and verified on Zoo Code 3.92.0.
 # v15 non-destructive merge of user profiles, selective visualvibe-* enforcing, conditional globalState pre-seeding.
-MARKER = "/*[VisualVibe profiles seed v15]*/"
+# v16 max context window / maxTokens updated from 1M (1e6) to 200K (200000) across all profiles.
+MARKER = "/*[VisualVibe profiles seed v16]*/"
 
 # Seed snippet injected at the top of Zoo Code's activate() function. __CTX__ is
 # replaced with the activate() context parameter name found in the bundle.
@@ -60,7 +61,7 @@ SEED = (
     + 'const __u=process.env.AI_API_URL,__k=process.env.AI_API_KEY,'
     + '__mk=(id,m,eff)=>({id,apiProvider:"openai",openAiBaseUrl:__u,openAiApiKey:__k,openAiModelId:m,'
     + 'enableReasoningEffort:true,reasoningEffort:eff,'
-    + 'openAiCustomModelInfo:{maxTokens:null,maxThinkingTokens:null,contextWindow:1e6,supportsImages:true,supportsPromptCache:true,supportsReasoningEffort:true,reasoningEffort:eff}}),'
+    + 'openAiCustomModelInfo:{maxTokens:null,maxThinkingTokens:null,contextWindow:200000,supportsImages:true,supportsPromptCache:true,supportsReasoningEffort:true,reasoningEffort:eff}}),'
     + '__effMap={"visualvibe-orchestrator":"high","visualvibe-code":"medium","visualvibe-ask":"medium","visualvibe-architect":"high","visualvibe-debug":"high","default":"medium"};'
     + 'let __existing=null;'
     + 'try{const __raw=await __CTX__.secrets.get(__vvk);if(__raw){__existing=JSON.parse(__raw);}}catch(__re){__log("read/parse existing profiles failed: "+(__re&&__re.message?__re.message:__re));__existing=null;}'
